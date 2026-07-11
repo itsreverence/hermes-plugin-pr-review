@@ -1,0 +1,171 @@
+{
+  "schema_version": 1,
+  "name": "graph-context-promotion",
+  "description": "Focused public PR corpus for deciding whether optional graph context should be promoted from explicit opt-in to default reviewer behavior. This lane intentionally favors known-issue or likely-finding cases over broad clean controls.",
+  "observed_at": "2026-06-30T00:00:00Z",
+  "cases": [
+    {
+      "id": "browser-tooling-playwright-41396",
+      "pr": "microsoft/playwright#41396",
+      "category": "browser-tooling",
+      "title": "feat(mcp): add `compress` option to `browser_snapshot` to collapse repeated ARIA nodes",
+      "observed_head_sha": "3d068ea257deebb689a3e1e9bbafb3c008393cca",
+      "observed_check_status": {"success": 1},
+      "changed_files": 4,
+      "additions": 305,
+      "deletions": 3,
+      "rationale": "Known lens-change case: graph caught nested interactive controls, baseline also caught sibling/global grouping behavior.",
+      "expectations": {
+        "expected_findings_max": 2,
+        "expected_truncated": false,
+        "expected_docs_loaded_min": 1,
+        "expected_posted_comments": 0
+      }
+    },
+    {
+      "id": "ci-failing-vite-22733",
+      "pr": "vitejs/vite#22733",
+      "category": "ci-failing",
+      "title": "refactor!: remove importGlobRestoreExtension option (fix #22710)",
+      "observed_head_sha": "578db0a2b2a7c8db3cf43d0fc007989955af8139",
+      "observed_check_status": {"failure": 1, "neutral": 3, "skipped": 2, "success": 11, "unknown": 1},
+      "changed_files": 6,
+      "additions": 20,
+      "deletions": 137,
+      "rationale": "Known finding case where baseline and graph found different plausible module-type edge cases.",
+      "expectations": {
+        "expected_findings_max": 2,
+        "expected_truncated": false,
+        "expected_docs_loaded_min": 1,
+        "expected_posted_comments": 0
+      }
+    },
+    {
+      "id": "compiler-parser-typescript-62928",
+      "pr": "microsoft/TypeScript#62928",
+      "category": "compiler-parser",
+      "title": "Fix crash in mixin checking",
+      "observed_head_sha": "f7a6b20cf2db6d334bc656a7e93cc4ab0608afdd",
+      "observed_check_status": {"neutral": 1, "success": 32, "unknown": 2},
+      "changed_files": 9,
+      "additions": 291,
+      "deletions": 20,
+      "rationale": "Compiler crash fix where cross-file type/checker context may matter for post-worthy review behavior.",
+      "expectations": {
+        "expected_findings_max": 2,
+        "expected_truncated": false,
+        "expected_docs_loaded_min": 1,
+        "expected_posted_comments": 0
+      }
+    },
+    {
+      "id": "compiler-parser-typescript-63154",
+      "pr": "microsoft/TypeScript#63154",
+      "category": "compiler-parser",
+      "title": "Fix crash in declaration emit with nested binding patterns",
+      "observed_head_sha": "4b568b506d38e90626982fb5e4028449fb5cdf05",
+      "observed_check_status": {"neutral": 1, "success": 22, "unknown": 2},
+      "changed_files": 6,
+      "additions": 477,
+      "deletions": 1,
+      "rationale": "Compiler declaration-emit crash fix with enough surface area to test graph retrieval against checker/emitter relationships.",
+      "expectations": {
+        "expected_findings_max": 2,
+        "expected_truncated": false,
+        "expected_docs_loaded_min": 1,
+        "expected_posted_comments": 0
+      }
+    },
+    {
+      "id": "compiler-parser-rust-157223",
+      "pr": "rust-lang/rust#157223",
+      "category": "compiler-parser",
+      "title": "rustdoc: Fix ICE on delegated async functions",
+      "observed_head_sha": "3467b6fc2039d983bce762032717c8730b934510",
+      "observed_check_status": {"skipped": 1, "success": 11},
+      "changed_files": 2,
+      "additions": 79,
+      "deletions": 12,
+      "rationale": "Small Rust compiler/rustdoc ICE fix for graph-vs-baseline behavior on symbol-heavy code.",
+      "expectations": {
+        "expected_findings_max": 2,
+        "expected_truncated": false,
+        "expected_docs_loaded_min": 1,
+        "expected_posted_comments": 0
+      }
+    },
+    {
+      "id": "backend-kubernetes-138550",
+      "pr": "kubernetes/kubernetes#138550",
+      "category": "backend",
+      "title": "cli-runtime/printers: fix column alignment regression from periodic tabwriter flush",
+      "observed_head_sha": "5fa57722d8b299a5a82cf48d59ac10007d762e95",
+      "observed_check_status": {"unknown": 13},
+      "changed_files": 2,
+      "additions": 182,
+      "deletions": 10,
+      "rationale": "Backend/CLI regression with formatting semantics and tests, useful for graph relevance beyond frontend cases.",
+      "expectations": {
+        "expected_findings_max": 2,
+        "expected_truncated": false,
+        "expected_docs_loaded_min": 1,
+        "expected_posted_comments": 0
+      }
+    },
+    {
+      "id": "backend-kubernetes-109137",
+      "pr": "kubernetes/kubernetes#109137",
+      "category": "backend",
+      "title": "Fix issues in indexer caused by object changing the number of index values",
+      "observed_head_sha": "cbbb5f70a47644f9830073d9d0329bf247a328a1",
+      "observed_check_status": {},
+      "changed_files": 2,
+      "additions": 78,
+      "deletions": 8,
+      "rationale": "Data-structure/indexing correctness case where graph may help follow API contracts and mutable object behavior.",
+      "expectations": {
+        "expected_findings_max": 2,
+        "expected_truncated": false,
+        "expected_docs_loaded_min": 1,
+        "expected_posted_comments": 0
+      }
+    },
+    {
+      "id": "small-docs-fastapi-15815",
+      "pr": "fastapi/fastapi#15815",
+      "category": "small-docs",
+      "title": "📝 Fix dead Ariadne FastAPI docs link in `How To - GraphQL`",
+      "observed_head_sha": "7cd17d2624f55bf5adfbd6de7102f63d7b959d33",
+      "observed_check_status": {"skipped": 3, "success": 29, "unknown": 1},
+      "changed_files": 1,
+      "additions": 1,
+      "deletions": 1,
+      "rationale": "Clean-control docs case retained in the promotion lane to detect graph-introduced noise.",
+      "expectations": {
+        "expected_findings_max": 0,
+        "expected_risk": "low",
+        "expected_truncated": false,
+        "expected_docs_loaded_min": 1,
+        "expected_posted_comments": 0
+      }
+    },
+    {
+      "id": "generated-deps-vite-22735",
+      "pr": "vitejs/vite#22735",
+      "category": "generated-dependency-heavy",
+      "title": "chore(deps): update actions/checkout action to v7",
+      "observed_head_sha": "185323f6ff980c31f04d5f2231884ccbc9cb2ef0",
+      "observed_check_status": {"failure": 2, "neutral": 1, "skipped": 3, "success": 16, "unknown": 1},
+      "changed_files": 12,
+      "additions": 14,
+      "deletions": 14,
+      "rationale": "Generated/dependency clean-control case to check whether graph adds noise to mostly mechanical changes.",
+      "expectations": {
+        "expected_findings_max": 0,
+        "expected_truncated": false,
+        "expected_docs_loaded_min": 1,
+        "expected_posted_comments": 0
+      }
+    }
+  ]
+}
