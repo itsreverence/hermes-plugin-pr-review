@@ -283,7 +283,7 @@ For webhook/watch canaries, prefer `postComment: true` with `postFindingsOnly: t
 
 Posting behavior is tested separately from normal dogfood. Keep the default repo registry at `postComment: false` unless the current task is an explicit posting canary.
 
-Use the recorded canary evidence and checklist in `evals/dogfood-runs/2026-07-08-posting-safety-canaries.md`:
+Use this checklist for every repository-specific posting canary:
 
 1. Prove the repo is clean, receiver status is OK, and note the current posting mode.
 2. Temporarily enable `--post-comment --post-findings-only` for the first posting canary.

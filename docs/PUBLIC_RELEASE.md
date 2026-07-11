@@ -1,40 +1,44 @@
-# Public Release Readiness
+# Public Beta Readiness
 
-This document separates runtime readiness from distribution readiness. Do not make the repository public until every release-decision item is resolved.
+This repository is the public-beta distribution of Hermes PR Review. This document records what was proven before publication and what still gates the `v0.2.0` tag; remaining tag gates do not make the public beta unavailable.
 
 ## Current assessment
 
 | Area | Status | Evidence / remaining work |
 |---|---|---|
 | Runtime | PASS | Local and public health, managed service lifecycle, scoped Funnel planning, owned webhook lifecycle, and no-post review flow are dogfooded. |
-| Install | PASS | The normal Hermes nested-plugin installer works from an isolated profile. |
-| CI | PASS | Python 3.11 and 3.12 plugin suites run against a pinned Hermes Agent API checkout. |
-| Diagnostics | PASS | `doctor`, service status/logs, Funnel status, and webhook status provide machine-readable output. |
-| Recovery | WARN | Core rollback paths are tested; managed secret rotation and fully guided stale-metadata repair remain follow-ups. |
-| Public snapshot | PASS | Current-tree maintainer paths and private-project dogfood records are removed; public OSS evals and repository-owned canaries remain. |
-| Repository history | PASS | Public distribution will start from a clean snapshot; the existing private repository remains the engineering archive. |
+| Public install | PASS | Anonymous clone and the normal Hermes nested-plugin installer succeeded from a fresh profile with GitHub credentials disabled. CLI discovery and uninstall also passed. |
+| CI | PASS | Public GitHub Actions passed the Python 3.11 and 3.12 plugin suites against a pinned Hermes Agent API checkout. |
+| Diagnostics | PASS | `doctor`, service status/logs, Funnel status, and webhook status provide machine-readable output. Issue #1 tracks making required doctor failures return a nonzero process status. |
+| Recovery | WARN | Core rollback paths are tested; managed secret rotation and fully guided stale-metadata repair remain post-beta improvements. |
+| Public snapshot | PASS | The public repository began from one clean commit. Maintainer paths, private-project dogfood records, and private archive PR/comment evidence were removed; public OSS evals remain. |
+| Security scan | PASS | Custom credential signatures and Gitleaks found no leaks in the release snapshot. GitHub vulnerability reporting and vulnerability alerts are enabled. |
 | License | PASS | MIT license with the neutral project-contributor holder. |
-| Visibility | PASS | Clean public distribution target: `itsreverence/hermes-plugin-pr-review`. |
+| Repository controls | PASS | `main` requires Python 3.11/3.12 checks and resolved conversations; force pushes and branch deletion are blocked. |
 
-## Completed hygiene checks
+## Repository topology
 
-- Current-tree search for maintainer home paths, private project namespaces, and live tailnet hostnames.
-- Full-history custom credential signature scan.
-- Full-history Gitleaks scan with redaction enabled.
-- Removal of private-project candidate matrices and dogfood reports from the release snapshot.
-- Replacement of maintainer-specific development paths with generic examples.
+- Public distribution and active development: `itsreverence/hermes-plugin-pr-review`
+- Private engineering archive: retained separately and not exposed through this repository's history
 
-A clean credential scan does not mean all historical metadata is appropriate to publish.
+Future improvements should use the public repository's issue and pull-request workflow. The private archive exists only for historical engineering context.
 
-## Recommended release shape
+## Completed public-distribution checks
 
-Prefer a clean public distribution repository or clean initial snapshot if preserving private development history has little user value. Keep the existing private repository as the engineering archive until the public beta proves stable. This also avoids exposing historical pull requests, comments, and internal dogfood context merely by changing repository visibility.
+- Current-tree scan for maintainer home paths, private project namespaces, private archive identifiers, and live tailnet hostnames.
+- One-commit clean-history export and Gitleaks scan.
+- Anonymous HTTPS clone with normal GitHub credentials disabled.
+- Hermes nested-plugin install and enable from the public URL under a fresh `HERMES_HOME`.
+- Plugin CLI discovery and `hermes pr-review --help`.
+- Unauthenticated `doctor --json`, which correctly diagnosed missing `gh auth` and setup prerequisites.
+- Plugin uninstall from the isolated profile.
+- Public CI on Python 3.11 and 3.12.
 
-If the existing repository will instead become public, audit GitHub pull requests, comments, Actions logs, releases, branches, tags, and other non-Git objects in addition to Git history.
+A clean credential scan does not imply that arbitrary local review artifacts are safe to publish. Review artifacts and raw webhook payloads remain local/private by default.
 
-## Remaining public-beta gates
+## Pre-`v0.2.0` tag gates
 
-1. Run the clean-room public install against the distribution repository.
-2. Run a real low-risk webhook delivery canary before enabling posting for any repository.
-3. Verify upgrade, rollback, and uninstall from an unauthenticated fresh profile.
+1. Run a real low-risk webhook delivery canary against this public repository with posting disabled first.
+2. Verify public update and rollback behavior between two published commits.
+3. Fix or explicitly accept issue #1 (`doctor --json` exits zero when required checks fail).
 4. Tag `v0.2.0` only after those lifecycle proofs pass.

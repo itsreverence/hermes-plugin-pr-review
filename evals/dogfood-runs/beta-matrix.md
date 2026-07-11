@@ -1,6 +1,6 @@
 # Dogfood Beta Matrix
 
-Purpose: a compact, no-post evaluation ladder for deciding whether Hermes PR Review is worth letting speak on GitHub. Posting mechanics are proven separately in `evals/dogfood-runs/2026-07-08-posting-safety-canaries.md`; this matrix is about review quality.
+Purpose: a compact, no-post evaluation ladder for deciding whether Hermes PR Review is worth letting speak on GitHub. Posting mechanics use the repository-specific checklist in [`docs/WORKFLOW.md`](../../docs/WORKFLOW.md#posting-canary-gate); this matrix is about review quality.
 
 Default command pattern:
 
