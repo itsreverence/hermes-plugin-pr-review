@@ -6,11 +6,11 @@ This repository is the public-beta distribution of Hermes PR Review. This docume
 
 | Area | Status | Evidence / remaining work |
 |---|---|---|
-| Runtime | PASS | Local and public health, managed service lifecycle, scoped Funnel planning, owned webhook lifecycle, and no-post review flow are dogfooded. |
+| Runtime | PASS | Local and public health, managed service lifecycle, scoped Funnel planning, owned webhook lifecycle, and no-post opened/synchronize/deduplication flow are dogfooded. |
 | Public install | PASS | Anonymous clone and the normal Hermes nested-plugin installer succeeded from a fresh profile with GitHub credentials disabled. CLI discovery and uninstall also passed. |
 | CI | PASS | Public GitHub Actions passed the Python 3.11 and 3.12 plugin suites against a pinned Hermes Agent API checkout. |
-| Diagnostics | PASS | `doctor`, service status/logs, Funnel status, and webhook status provide machine-readable output. Issue #1 tracks making required doctor failures return a nonzero process status. |
-| Recovery | WARN | Core rollback paths are tested; managed secret rotation and fully guided stale-metadata repair remain post-beta improvements. |
+| Diagnostics | PASS | `doctor`, service status/logs, Funnel status, and webhook status provide machine-readable output. Issue #1 tracks a Hermes core dispatcher limitation that currently swallows the doctor's nonzero return status. |
+| Recovery | PASS | Fresh-profile public install, force-reinstall update, pinned public-commit rollback, restore, and uninstall were exercised while preserving reviewer state outside the plugin directory. Managed secret rotation and fully guided stale-metadata repair remain post-beta improvements. |
 | Public snapshot | PASS | The public repository began from one clean commit. Maintainer paths, private-project dogfood records, and private archive PR/comment evidence were removed; public OSS evals remain. |
 | Security scan | PASS | Custom credential signatures and Gitleaks found no leaks in the release snapshot. GitHub vulnerability reporting and vulnerability alerts are enabled. |
 | License | PASS | MIT license with the neutral project-contributor holder. |
@@ -33,12 +33,20 @@ Future improvements should use the public repository's issue and pull-request wo
 - Unauthenticated `doctor --json`, which correctly diagnosed missing `gh auth` and setup prerequisites.
 - Plugin uninstall from the isolated profile.
 - Public CI on Python 3.11 and 3.12.
+- Owned public-repository webhook delivery for `opened` and `synchronize` with
+  GitHub 202 responses, processed local spool records, exact-head artifacts,
+  collected graph context, zero automated comments, and polling deduplication.
+- Force-reinstall update from the public nested-plugin identifier, detached
+  public-commit rollback, and restore to current public `main`, with reviewer
+  state outside the plugin directory preserved.
 
 A clean credential scan does not imply that arbitrary local review artifacts are safe to publish. Review artifacts and raw webhook payloads remain local/private by default.
 
 ## Pre-`v0.2.0` tag gates
 
-1. Run a real low-risk webhook delivery canary against this public repository with posting disabled first.
-2. Verify public update and rollback behavior between two published commits.
-3. Fix or explicitly accept issue #1 (`doctor --json` exits zero when required checks fail).
-4. Tag `v0.2.0` only after those lifecycle proofs pass.
+1. Validate and either merge or explicitly accept the upstream Hermes core
+   dependency tracked by issue #1 (`doctor --json` returns failure internally,
+   but the current Hermes top-level dispatcher exits zero).
+2. Run the exact release-tree test, lint, compile, link, credential-scan, and
+   independent-review gates.
+3. Tag `v0.2.0` only after those final gates pass.
