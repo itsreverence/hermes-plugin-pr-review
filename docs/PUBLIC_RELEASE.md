@@ -9,7 +9,7 @@ This repository is the public-beta distribution of Hermes PR Review. This docume
 | Runtime | PASS | Local and public health, managed service lifecycle, scoped Funnel planning, owned webhook lifecycle, and no-post opened/synchronize/deduplication flow are dogfooded. |
 | Public install | PASS | Anonymous clone and the normal Hermes nested-plugin installer succeeded from a fresh profile with GitHub credentials disabled. CLI discovery and uninstall also passed. |
 | CI | PASS | Public GitHub Actions passed the Python 3.11 and 3.12 plugin suites against a pinned Hermes Agent API checkout. |
-| Diagnostics | PASS | `doctor`, service status/logs, Funnel status, and webhook status provide machine-readable output. Issue #1 tracks a Hermes core dispatcher limitation that currently swallows the doctor's nonzero return status. |
+| Diagnostics | WARN | Diagnostic payloads are truthful and machine-readable, but current Hermes releases swallow integer CLI-handler statuses, so a required `doctor` failure can still exit zero. Issue #1 tracks the canonical upstream fix and supported-runtime availability. |
 | Recovery | PASS | Fresh-profile public install, force-reinstall update, pinned public-commit rollback, restore, and uninstall were exercised while preserving reviewer state outside the plugin directory. Managed secret rotation and fully guided stale-metadata repair remain post-beta improvements. |
 | Public snapshot | PASS | The public repository began from one clean commit. Maintainer paths, private-project dogfood records, and private archive PR/comment evidence were removed; public OSS evals remain. |
 | Security scan | PASS | Custom credential signatures and Gitleaks found no leaks in the release snapshot. GitHub vulnerability reporting and vulnerability alerts are enabled. |
@@ -44,9 +44,10 @@ A clean credential scan does not imply that arbitrary local review artifacts are
 
 ## Pre-`v0.2.0` tag gates
 
-1. Validate and either merge or explicitly accept the upstream Hermes core
-   dependency tracked by issue #1 (`doctor --json` returns failure internally,
-   but the current Hermes top-level dispatcher exits zero).
+1. Wait for the complete upstream Hermes CLI exit-status fix tracked by issue
+   #1 to merge and become available in the supported runtime. The canonical
+   upstream work is `NousResearch/hermes-agent#43645`; all supported launchers,
+   including the repository `./hermes` wrapper, must propagate the status.
 2. Run the exact release-tree test, lint, compile, link, credential-scan, and
    independent-review gates.
 3. Tag `v0.2.0` only after those final gates pass.

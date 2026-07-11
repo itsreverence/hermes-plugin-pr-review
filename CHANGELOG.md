@@ -2,7 +2,7 @@
 
 All notable changes to Hermes PR Review are documented here.
 
-## 0.2.0 — Public beta
+## 0.2.0 — Public-beta candidate
 
 - Add actionable `doctor` diagnostics with JSON output and repair steps.
 - Add managed Linux user-systemd receiver install, status, logs, and safe removal.
