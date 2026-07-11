@@ -25,10 +25,14 @@ hermes plugins install itsreverence/hermes-plugin-pr-review/plugins/pr_review --
 hermes pr-review doctor
 ```
 
-Update or remove it with the standard Hermes plugin commands:
+Nested-plugin installs are updated by reinstalling the public identifier. The
+current Hermes `plugins update` command requires a plugin-local `.git`
+directory, which nested installs intentionally do not retain:
 
 ```bash
-hermes plugins update pr-review
+hermes plugins install \
+  itsreverence/hermes-plugin-pr-review/plugins/pr_review \
+  --force --enable
 hermes plugins remove pr-review
 ```
 
@@ -112,6 +116,23 @@ hermes pr-review status --github-repo OWNER/REPO --github-hook-id HOOK_ID
 Open or synchronize a pull request, then rerun `status`. A real graph-backed review is green only when the review succeeded, was not a `--no-llm` smoke, and recorded collected graph context.
 
 ## Safe rollback
+
+To roll back the plugin payload to a known commit, clone that public commit and
+install its plugin subdirectory explicitly:
+
+```bash
+git clone https://github.com/itsreverence/hermes-plugin-pr-review.git \
+  /tmp/hermes-plugin-pr-review-rollback
+git -C /tmp/hermes-plugin-pr-review-rollback checkout --detach COMMIT_SHA
+hermes plugins install \
+  "file:///tmp/hermes-plugin-pr-review-rollback#plugins/pr_review" \
+  --force --enable
+```
+
+This replaces only the installed plugin directory. Repository registry,
+webhook secret, delivery spool, and review artifacts under
+`~/.hermes/pr-reviewer/` are preserved. Reinstall the public identifier shown
+above to return to the latest release.
 
 Remote and destructive operations require `--apply`:
 
