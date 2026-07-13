@@ -15,6 +15,7 @@ hermes pr-review enable OWNER/REPO --local-repo /path/to/repo --json
 
 GitHub comment posting is **disabled by default**. Keep it disabled until a no-post review and repository-specific webhook canary have been inspected.
 
-For the managed Linux receiver, Tailscale Funnel, GitHub webhook, verification, and rollback flow, see:
+For installation, managed receiver, Tailscale Funnel, GitHub webhook, verification, and rollback, see:
 
-<https://github.com/itsreverence/hermes-plugin-pr-review#zero-to-first-review-quickstart>
+<https://github.com/itsreverence/hermes-plugin-pr-review/blob/main/docs/INSTALLATION.md>
+<https://github.com/itsreverence/hermes-plugin-pr-review/blob/main/docs/OPERATIONS.md>

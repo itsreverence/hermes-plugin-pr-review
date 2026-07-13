@@ -1,0 +1,60 @@
+name: Bug report
+description: Report a problem with Hermes PR Review
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem.
+
+        **Privacy:** Do not include webhook secrets, provider credentials, private repository content, raw webhook payloads, private PR text, local absolute paths, or unredacted review artifacts.
+  - type: input
+    id: hermes-version
+    attributes:
+      label: Hermes Agent version or commit
+      placeholder: "version or commit SHA"
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version or commit
+      placeholder: "main commit or release tag"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Problem area
+      options:
+        - Install / enablement
+        - Direct review
+        - Watched repository
+        - Webhook receiver / delivery
+        - Managed service / Funnel
+        - GitHub comment posting
+        - CodeGraph context
+        - Diagnostics / status
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe expected and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Relevant redacted diagnostics
+      description: Include only the smallest relevant redacted excerpt from doctor/status/log output. Never include secrets, private payloads, or unreviewed artifacts.
+      render: text
