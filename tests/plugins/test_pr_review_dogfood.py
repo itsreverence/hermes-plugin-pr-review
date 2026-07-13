@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -54,6 +55,47 @@ def test_write_dogfood_summary_rejects_symlinked_observation_lock(monkeypatch, t
         dogfood._write_dogfood_summary({"run_id": "run-1"}, output_dir)
 
     assert victim.read_text(encoding="utf-8") == "unchanged"
+
+
+def test_observation_lock_swap_cannot_chmod_or_write_victim(monkeypatch, tmp_path: Path):
+    output_dir = tmp_path / "runs"
+    output_dir.mkdir()
+    lock_path = output_dir / "observations.lock"
+    lock_path.write_text("", encoding="utf-8")
+    victim = tmp_path / "victim"
+    victim.write_text("do not touch", encoding="utf-8")
+    victim.chmod(0o644)
+    real_open = os.open
+    swapped = False
+
+    def swapping_open(path, flags, mode=0o777):
+        nonlocal swapped
+        fd = real_open(path, flags, mode)
+        if Path(path) == lock_path and not swapped:
+            swapped = True
+            lock_path.unlink()
+            lock_path.symlink_to(victim)
+        return fd
+
+    monkeypatch.setattr(dogfood.os, "open", swapping_open)
+    monkeypatch.setattr(dogfood, "_observation_record", lambda _summary: {})
+    dogfood._write_observation_history({"run_id": "run-1"}, output_dir)
+
+    assert victim.read_text(encoding="utf-8") == "do not touch"
+    assert victim.stat().st_mode & 0o777 == 0o644
+
+
+def test_observation_lock_closes_fd_when_fchmod_fails(monkeypatch, tmp_path: Path):
+    output_dir = tmp_path / "runs"
+    closed = []
+    real_close = os.close
+    monkeypatch.setattr(dogfood.core, "_fchmod", lambda _fd, _mode: (_ for _ in ()).throw(OSError("chmod failed")))
+    monkeypatch.setattr(dogfood.os, "close", lambda fd: (closed.append(fd), real_close(fd))[1])
+
+    with pytest.raises(OSError, match="chmod failed"):
+        dogfood._write_observation_history({"run_id": "run-1"}, output_dir)
+
+    assert len(closed) == 1
 
 
 def test_cmd_dogfood_run_writes_no_post_summary(monkeypatch, tmp_path: Path):

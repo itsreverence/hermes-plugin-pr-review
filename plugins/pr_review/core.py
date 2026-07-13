@@ -1095,6 +1095,23 @@ def _fsync_directory(path: Path) -> None:
             raise
 
 
+def _fchmod(fd: int, mode: int) -> None:
+    if hasattr(os, "fchmod"):
+        os.fchmod(fd, mode)
+
+
+def _chmod_directory_private(path: Path) -> None:
+    if os.name == "nt":  # Windows permissions are governed primarily by ACLs.
+        os.chmod(path, 0o700)
+        return
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    try:
+        _fchmod(fd, 0o700)
+    finally:
+        os.close(fd)
+
+
 def _secure_artifact_directory(path: Path) -> None:
     """Create an artifact directory and enforce owner-only access without following symlinks."""
     _reject_symlink_components(path)
@@ -1105,17 +1122,17 @@ def _secure_artifact_directory(path: Path) -> None:
     try:
         relative = absolute.relative_to(managed_root)
     except ValueError:
-        os.chmod(absolute, 0o700)
+        _chmod_directory_private(absolute)
         return
     current = managed_root
     current.mkdir(mode=0o700, parents=True, exist_ok=True)
     _reject_symlink_components(current)
-    os.chmod(current, 0o700)
+    _chmod_directory_private(current)
     for part in relative.parts:
         current /= part
         if current.exists():
             _reject_symlink_components(current)
-            os.chmod(current, 0o700)
+            _chmod_directory_private(current)
 
 
 def _write_private_text(path: Path, value: str) -> None:
@@ -1134,14 +1151,13 @@ def _write_private_text(path: Path, value: str) -> None:
             delete=False,
         ) as handle:
             temporary = Path(handle.name)
-            os.chmod(temporary, 0o600)
+            _fchmod(handle.fileno(), 0o600)
             handle.write(value)
             handle.flush()
             os.fsync(handle.fileno())
         if path.is_symlink():
             raise ValueError(f"review artifact file must not be a symlink: {path}")
         temporary.replace(path)
-        os.chmod(path, 0o600)
         _fsync_directory(path.parent)
     finally:
         if temporary is not None:
