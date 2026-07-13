@@ -10,9 +10,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import shutil
+import os
 import sys
-import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -429,10 +428,7 @@ def _summarize_observations(records: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False) as handle:
-        tmp_path = Path(handle.name)
-        handle.write(content)
-    tmp_path.replace(path)
+    core._write_private_text(path, content)
 
 
 def _read_observation_records(history_path: Path) -> List[Dict[str, Any]]:
@@ -554,7 +550,7 @@ def _copy_dogfood_artifacts(payload: Dict[str, Any], *, output_dir: str | Path, 
     if not isinstance(paths, dict):
         return
     artifact_root = Path(output_dir) / f"{run_id}-artifacts"
-    artifact_root.mkdir(parents=True, exist_ok=True)
+    core._secure_artifact_directory(artifact_root)
     stem = f"{_safe_artifact_stem(case_id)}__{_safe_artifact_stem(variant)}"
     copied: Dict[str, str] = {}
     for key, raw_path in list(paths.items()):
@@ -564,7 +560,7 @@ def _copy_dogfood_artifacts(payload: Dict[str, Any], *, output_dir: str | Path, 
         if not src.exists() or not src.is_file():
             continue
         dest = artifact_root / f"{stem}.{key}{src.suffix or '.txt'}"
-        shutil.copyfile(src, dest)
+        core._write_private_text(dest, src.read_text(encoding="utf-8"))
         copied[key] = str(dest)
     if copied:
         payload["source_paths"] = dict(paths)
@@ -719,9 +715,16 @@ def _case_comparison(summary: Dict[str, Any], case_id: str) -> Dict[str, Any]:
 
 
 def _write_score_record(score_file: Path, record: Dict[str, Any]) -> None:
-    score_file.parent.mkdir(parents=True, exist_ok=True)
-    with score_file.open("a", encoding="utf-8") as handle:
+    core._secure_artifact_directory(score_file.parent)
+    if score_file.is_symlink():
+        raise ValueError(f"dogfood score file must not be a symlink: {score_file}")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(score_file, flags, 0o600)
+    os.chmod(score_file, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def _read_score_records(score_file: Path) -> List[Dict[str, Any]]:

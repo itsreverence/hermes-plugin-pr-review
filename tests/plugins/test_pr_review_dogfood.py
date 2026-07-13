@@ -4,8 +4,41 @@ import argparse
 import json
 from pathlib import Path
 
+import pytest
+
 from plugins.pr_review import cli as pr_review_cli
 from plugins.pr_review import dogfood
+
+
+def test_copy_dogfood_artifacts_stays_owner_only(tmp_path: Path):
+    source = tmp_path / "source.md"
+    source.write_text("private review", encoding="utf-8")
+    payload = {"paths": {"review": str(source)}}
+    output_dir = tmp_path / "runs"
+
+    dogfood._copy_dogfood_artifacts(payload, output_dir=output_dir, run_id="run-1", case_id="case", variant="baseline")
+
+    artifact_root = output_dir / "run-1-artifacts"
+    copied = Path(payload["paths"]["review"])
+    assert artifact_root.stat().st_mode & 0o777 == 0o700
+    assert copied.stat().st_mode & 0o777 == 0o600
+    assert copied.read_text(encoding="utf-8") == "private review"
+
+
+def test_copy_dogfood_artifacts_rejects_symlinked_output(tmp_path: Path):
+    source = tmp_path / "source.md"
+    source.write_text("private review", encoding="utf-8")
+    payload = {"paths": {"review": str(source)}}
+    output_dir = tmp_path / "runs"
+    output_dir.mkdir()
+    target = tmp_path / "outside"
+    target.mkdir()
+    (output_dir / "run-1-artifacts").symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="must not contain symlinks"):
+        dogfood._copy_dogfood_artifacts(payload, output_dir=output_dir, run_id="run-1", case_id="case", variant="baseline")
+
+    assert list(target.iterdir()) == []
 
 
 def test_cmd_dogfood_run_writes_no_post_summary(monkeypatch, tmp_path: Path):

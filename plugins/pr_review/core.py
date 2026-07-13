@@ -1066,28 +1066,53 @@ def normalize_review(raw: Any) -> Dict[str, Any]:
     return normalized
 
 
-def _secure_artifact_directory(path: Path) -> None:
-    """Create an artifact directory and enforce owner-only access in the managed tree."""
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
-    managed_root = artifacts_root().parent.resolve(strict=False)
-    resolved = path.resolve(strict=False)
+def _reject_symlink_components(path: Path) -> None:
+    """Fail closed when any existing component of a write path is a symlink."""
+    absolute = path.absolute()
+    current = Path(absolute.anchor)
+    for part in absolute.parts[1:]:
+        current /= part
+        if current.is_symlink():
+            raise ValueError(f"review artifact path must not contain symlinks: {current}")
+
+
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    fd = os.open(path, flags)
     try:
-        relative = resolved.relative_to(managed_root)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _secure_artifact_directory(path: Path) -> None:
+    """Create an artifact directory and enforce owner-only access without following symlinks."""
+    _reject_symlink_components(path)
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _reject_symlink_components(path)
+    managed_root = artifacts_root().parent.absolute()
+    absolute = path.absolute()
+    try:
+        relative = absolute.relative_to(managed_root)
     except ValueError:
-        os.chmod(resolved, 0o700)
+        os.chmod(absolute, 0o700)
         return
     current = managed_root
     current.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _reject_symlink_components(current)
     os.chmod(current, 0o700)
     for part in relative.parts:
         current /= part
         if current.exists():
+            _reject_symlink_components(current)
             os.chmod(current, 0o700)
 
 
 def _write_private_text(path: Path, value: str) -> None:
     """Atomically replace a private artifact without a world-readable window."""
     _secure_artifact_directory(path.parent)
+    if path.is_symlink():
+        raise ValueError(f"review artifact file must not be a symlink: {path}")
     temporary: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -1103,8 +1128,11 @@ def _write_private_text(path: Path, value: str) -> None:
             handle.write(value)
             handle.flush()
             os.fsync(handle.fileno())
+        if path.is_symlink():
+            raise ValueError(f"review artifact file must not be a symlink: {path}")
         temporary.replace(path)
         os.chmod(path, 0o600)
+        _fsync_directory(path.parent)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)

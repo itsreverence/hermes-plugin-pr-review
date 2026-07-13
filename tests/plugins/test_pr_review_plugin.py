@@ -225,6 +225,43 @@ def test_write_artifacts_repairs_permissions_under_permissive_umask(tmp_path: Pa
     assert Path(paths["context"]).read_text(encoding="utf-8") == "private context"
 
 
+def test_write_artifacts_rejects_symlinked_managed_directory(monkeypatch, tmp_path: Path):
+    hermes_home = tmp_path / "hermes"
+    target = tmp_path / "outside"
+    target.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    out_dir = core.artifacts_root() / "owner_repo" / "9" / "head"
+    out_dir.parent.mkdir(parents=True)
+    out_dir.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="must not contain symlinks"):
+        core.write_artifacts(
+            out_dir,
+            context="private context",
+            manifest={"head_sha": "abcdef", "docs_loaded": [], "skipped_files": [], "diff_truncated": False},
+            review={"verdict": "comment", "risk": "low", "summary": "Clean.", "findings": [], "verification_notes": []},
+        )
+
+    assert not (target / "context.md").exists()
+
+
+def test_write_artifacts_rejects_symlinked_artifact_file(tmp_path: Path):
+    target = tmp_path / "outside.txt"
+    target.write_text("do not replace", encoding="utf-8")
+    context_path = tmp_path / "context.md"
+    context_path.symlink_to(target)
+
+    with pytest.raises(ValueError, match="must not be a symlink"):
+        core.write_artifacts(
+            tmp_path,
+            context="private context",
+            manifest={"head_sha": "abcdef", "docs_loaded": [], "skipped_files": [], "diff_truncated": False},
+            review={"verdict": "comment", "risk": "low", "summary": "Clean.", "findings": [], "verification_notes": []},
+        )
+
+    assert target.read_text(encoding="utf-8") == "do not replace"
+
+
 def test_render_markdown_reports_observed_check_counts():
     review = core.normalize_review(
         {
