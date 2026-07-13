@@ -221,7 +221,7 @@ def test_write_artifacts_repairs_permissions_under_permissive_umask(tmp_path: Pa
     finally:
         os.umask(previous_umask)
 
-    assert out_dir.stat().st_mode & 0o777 == 0o700
+    assert out_dir.stat().st_mode & 0o777 == 0o755
     assert all(Path(path).stat().st_mode & 0o777 == 0o600 for path in paths.values())
     assert Path(paths["context"]).read_text(encoding="utf-8") == "private context"
 

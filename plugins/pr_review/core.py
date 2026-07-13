@@ -1100,39 +1100,25 @@ def _fchmod(fd: int, mode: int) -> None:
         os.fchmod(fd, mode)
 
 
-def _chmod_directory_private(path: Path) -> None:
-    if os.name == "nt":  # Windows permissions are governed primarily by ACLs.
-        os.chmod(path, 0o700)
-        return
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(path, flags)
-    try:
-        _fchmod(fd, 0o700)
-    finally:
-        os.close(fd)
-
-
 def _secure_artifact_directory(path: Path) -> None:
-    """Create an artifact directory and enforce owner-only access without following symlinks."""
-    _reject_symlink_components(path)
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
-    _reject_symlink_components(path)
-    managed_root = artifacts_root().parent.absolute()
+    """Create owner-only directories without changing permissions on existing ancestors."""
     absolute = path.absolute()
-    try:
-        relative = absolute.relative_to(managed_root)
-    except ValueError:
-        _chmod_directory_private(absolute)
-        return
-    current = managed_root
-    current.mkdir(mode=0o700, parents=True, exist_ok=True)
+    missing: List[Path] = []
+    current = absolute
+    while not current.exists():
+        if current.is_symlink():
+            raise ValueError(f"review artifact path must not contain symlinks: {current}")
+        missing.append(current)
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
     _reject_symlink_components(current)
-    _chmod_directory_private(current)
-    for part in relative.parts:
-        current /= part
-        if current.exists():
-            _reject_symlink_components(current)
-            _chmod_directory_private(current)
+    if current.exists() and not current.is_dir():
+        raise ValueError(f"review artifact directory is not a directory: {current}")
+    for directory in reversed(missing):
+        directory.mkdir(mode=0o700)
+        _reject_symlink_components(directory)
 
 
 def _write_private_text(path: Path, value: str) -> None:
