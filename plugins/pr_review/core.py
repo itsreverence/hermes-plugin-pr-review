@@ -6,8 +6,10 @@ import base64
 import fnmatch
 import hashlib
 import json
+import os
 import re
 import subprocess
+import tempfile
 from urllib.parse import quote
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -1064,6 +1066,50 @@ def normalize_review(raw: Any) -> Dict[str, Any]:
     return normalized
 
 
+def _secure_artifact_directory(path: Path) -> None:
+    """Create an artifact directory and enforce owner-only access in the managed tree."""
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    managed_root = artifacts_root().parent.resolve(strict=False)
+    resolved = path.resolve(strict=False)
+    try:
+        relative = resolved.relative_to(managed_root)
+    except ValueError:
+        os.chmod(resolved, 0o700)
+        return
+    current = managed_root
+    current.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(current, 0o700)
+    for part in relative.parts:
+        current /= part
+        if current.exists():
+            os.chmod(current, 0o700)
+
+
+def _write_private_text(path: Path, value: str) -> None:
+    """Atomically replace a private artifact without a world-readable window."""
+    _secure_artifact_directory(path.parent)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            os.chmod(temporary, 0o600)
+            handle.write(value)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+        os.chmod(path, 0o600)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def write_artifacts(
     out_dir: Path,
     *,
@@ -1072,7 +1118,7 @@ def write_artifacts(
     review: Dict[str, Any],
     graph_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, str]:
-    out_dir.mkdir(parents=True, exist_ok=True)
+    _secure_artifact_directory(out_dir)
     review = normalize_review(review)
     paths = {
         "context": out_dir / "context.md",
@@ -1084,14 +1130,14 @@ def write_artifacts(
     if graph_context:
         paths["graph_context"] = out_dir / "graph-context.json"
         paths["graph_context_markdown"] = out_dir / "graph-context.md"
-    paths["context"].write_text(context, encoding="utf-8")
-    paths["manifest"].write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
-    paths["findings"].write_text(json.dumps(review, indent=2, sort_keys=True), encoding="utf-8")
-    paths["review"].write_text(render_markdown(review, manifest), encoding="utf-8")
-    paths["trace"].write_text(json.dumps(build_review_trace(manifest), indent=2, sort_keys=True), encoding="utf-8")
+    _write_private_text(paths["context"], context)
+    _write_private_text(paths["manifest"], json.dumps(manifest, indent=2, sort_keys=True))
+    _write_private_text(paths["findings"], json.dumps(review, indent=2, sort_keys=True))
+    _write_private_text(paths["review"], render_markdown(review, manifest))
+    _write_private_text(paths["trace"], json.dumps(build_review_trace(manifest), indent=2, sort_keys=True))
     if graph_context:
-        paths["graph_context"].write_text(json.dumps(graph_context.get("raw") or {}, indent=2, sort_keys=True), encoding="utf-8")
-        paths["graph_context_markdown"].write_text(str(graph_context.get("markdown") or ""), encoding="utf-8")
+        _write_private_text(paths["graph_context"], json.dumps(graph_context.get("raw") or {}, indent=2, sort_keys=True))
+        _write_private_text(paths["graph_context_markdown"], str(graph_context.get("markdown") or ""))
     return {name: str(path) for name, path in paths.items()}
 
 

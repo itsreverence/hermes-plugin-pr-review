@@ -42,6 +42,17 @@ def test_write_json_file_cleans_up_unique_temp_after_serialization_failure(tmp_p
     assert list(tmp_path.glob(f".{target.name}.*.tmp")) == []
 
 
+def test_webhook_delivery_spool_path_contains_traversal_shaped_delivery(monkeypatch, tmp_path: Path):
+    spool_dir = tmp_path / "deliveries"
+    monkeypatch.setattr(automation, "_webhook_delivery_spool_dir", lambda: spool_dir)
+
+    path = automation._webhook_delivery_spool_path("../../outside\\nested", b"payload")
+
+    assert path.parent == spool_dir
+    assert path.name == ".._.._outside_nested.json"
+    assert path.resolve(strict=False).is_relative_to(spool_dir.resolve(strict=False))
+
+
 def test_create_webhook_delivery_spool_never_replaces_terminal_delivery(tmp_path: Path):
     spool_path = tmp_path / "delivery-duplicate.json"
     terminal = {"schema_version": 1, "status": "processed", "delivery": "delivery-duplicate", "rc": 0}

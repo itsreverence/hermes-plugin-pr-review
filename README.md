@@ -38,7 +38,7 @@ hermes plugins install itsreverence/hermes-plugin-pr-review/plugins/pr_review --
 hermes pr-review review OWNER/REPO#123 --json
 ```
 
-Review artifacts are written under:
+Review artifacts are written as owner-only files (`0600`) under owner-only managed directories (`0700`):
 
 ```text
 ~/.hermes/pr-reviewer/reviews/OWNER_REPO/PR/HEADSHA/
