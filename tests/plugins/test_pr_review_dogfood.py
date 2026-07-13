@@ -41,6 +41,21 @@ def test_copy_dogfood_artifacts_rejects_symlinked_output(tmp_path: Path):
     assert list(target.iterdir()) == []
 
 
+def test_write_dogfood_summary_rejects_symlinked_observation_lock(monkeypatch, tmp_path: Path):
+    output_dir = tmp_path / "runs"
+    output_dir.mkdir()
+    victim = tmp_path / "outside.lock"
+    victim.write_text("unchanged", encoding="utf-8")
+    (output_dir / "observations.lock").symlink_to(victim)
+    monkeypatch.setattr(dogfood, "_render_dogfood_markdown", lambda _summary: "summary\n")
+    monkeypatch.setattr(dogfood, "_observation_record", lambda _summary: {})
+
+    with pytest.raises(ValueError, match="observation lock must not be a symlink"):
+        dogfood._write_dogfood_summary({"run_id": "run-1"}, output_dir)
+
+    assert victim.read_text(encoding="utf-8") == "unchanged"
+
+
 def test_cmd_dogfood_run_writes_no_post_summary(monkeypatch, tmp_path: Path):
     raw = {
         "schema_version": 1,

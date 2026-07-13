@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import subprocess
@@ -260,6 +261,19 @@ def test_write_artifacts_rejects_symlinked_artifact_file(tmp_path: Path):
         )
 
     assert target.read_text(encoding="utf-8") == "do not replace"
+
+
+def test_fsync_directory_ignores_unsupported_filesystem_error(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(core.os, "fsync", lambda _fd: (_ for _ in ()).throw(OSError(errno.EINVAL, "unsupported")))
+
+    core._fsync_directory(tmp_path)
+
+
+def test_fsync_directory_propagates_real_io_error(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(core.os, "fsync", lambda _fd: (_ for _ in ()).throw(OSError(errno.EIO, "I/O error")))
+
+    with pytest.raises(OSError, match="I/O error"):
+        core._fsync_directory(tmp_path)
 
 
 def test_render_markdown_reports_observed_check_counts():

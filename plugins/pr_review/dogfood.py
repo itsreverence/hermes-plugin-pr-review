@@ -484,7 +484,13 @@ def _write_observation_history(summary: Dict[str, Any], output_dir: str | Path) 
     summary_path = root / "observations-summary.json"
     lock_path = root / "observations.lock"
     record = _observation_record(summary)
-    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+    core._secure_artifact_directory(root)
+    if lock_path.is_symlink():
+        raise ValueError(f"dogfood observation lock must not be a symlink: {lock_path}")
+    flags = os.O_RDWR | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(lock_path, flags, 0o600)
+    os.chmod(lock_path, 0o600)
+    with os.fdopen(fd, "a+", encoding="utf-8") as lock_handle:
         _lock_observation_file(lock_handle)
         try:
             records = []
@@ -510,7 +516,7 @@ def _write_observation_history(summary: Dict[str, Any], output_dir: str | Path) 
 
 def _write_dogfood_summary(summary: Dict[str, Any], output_dir: str | Path) -> Dict[str, str]:
     root = Path(output_dir)
-    root.mkdir(parents=True, exist_ok=True)
+    core._secure_artifact_directory(root)
     base = root / summary["run_id"]
     json_path = base.with_suffix(".json")
     md_path = base.with_suffix(".md")
@@ -718,6 +724,7 @@ def _write_score_record(score_file: Path, record: Dict[str, Any]) -> None:
     core._secure_artifact_directory(score_file.parent)
     if score_file.is_symlink():
         raise ValueError(f"dogfood score file must not be a symlink: {score_file}")
+    existed = score_file.exists()
     flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(score_file, flags, 0o600)
     os.chmod(score_file, 0o600)
@@ -725,6 +732,8 @@ def _write_score_record(score_file: Path, record: Dict[str, Any]) -> None:
         handle.write(json.dumps(record, sort_keys=True) + "\n")
         handle.flush()
         os.fsync(handle.fileno())
+    if not existed:
+        core._fsync_directory(score_file.parent)
 
 
 def _read_score_records(score_file: Path) -> List[Dict[str, Any]]:

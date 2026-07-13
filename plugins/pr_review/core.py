@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import errno
 import fnmatch
 import hashlib
 import json
@@ -1077,12 +1078,21 @@ def _reject_symlink_components(path: Path) -> None:
 
 
 def _fsync_directory(path: Path) -> None:
+    if os.name == "nt":  # Windows does not support opening directories for fsync.
+        return
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    fd = os.open(path, flags)
     try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+        fd = os.open(path, flags)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        unsupported = {errno.EBADF, errno.EINVAL, errno.ENOTSUP}
+        if hasattr(errno, "EOPNOTSUPP"):
+            unsupported.add(errno.EOPNOTSUPP)
+        if exc.errno not in unsupported:
+            raise
 
 
 def _secure_artifact_directory(path: Path) -> None:
