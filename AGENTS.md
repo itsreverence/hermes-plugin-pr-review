@@ -13,18 +13,4 @@ This repo is a local-first external Hermes PR review plugin.
 
 ## Verification
 
-Use a local Hermes checkout when developing against unreleased plugin APIs:
-
-```bash
-export HERMES_AGENT_SRC=/path/to/hermes-agent
-PYTHONPATH="$PWD:$HERMES_AGENT_SRC" python -m pytest tests/plugins -q
-PYTHONPATH="$PWD:$HERMES_AGENT_SRC" python -m py_compile plugins/pr_review/*.py
-```
-
-For live no-post dogfood:
-
-```bash
-hermes pr-review review OWNER/REPO#123 --json
-```
-
-Record useful/noisy/missed findings in future eval notes rather than turning one-off preferences into global rules.
+Follow [CONTRIBUTING.md](CONTRIBUTING.md) for the local gate and pull-request expectations. Use [docs/TESTING.md](docs/TESTING.md) for no-post dogfood and posting canaries. Keep operational commands and recovery guidance in [docs/OPERATIONS.md](docs/OPERATIONS.md).

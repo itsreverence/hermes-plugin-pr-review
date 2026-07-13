@@ -8,7 +8,7 @@ Until the first public release, only the latest commit on `main` is maintained. 
 
 Do not open a public issue containing webhook secrets, provider credentials, private repository data, raw webhook payloads, or review artifacts.
 
-Use GitHub private vulnerability reporting when it is enabled for this repository. If that option is unavailable, contact the repository owner privately through their GitHub profile before sharing technical details.
+Use [GitHub private vulnerability reporting](https://github.com/itsreverence/hermes-plugin-pr-review/security/advisories/new). Do not include sensitive details in a public issue.
 
 Include the affected version, deployment shape, reproduction steps, and impact. Redact credentials, repository contents, local absolute paths, PR text, and artifact payloads.
 

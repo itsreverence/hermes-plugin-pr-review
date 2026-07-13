@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest an improvement to Hermes PR Review
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement. Keep examples public-safe and do not include secrets, private repository content, raw payloads, or review artifacts.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What workflow limitation are you trying to solve?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed behavior
+      description: Describe the desired outcome, including posting, remote-mutation, or trust-boundary implications.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional public-safe context
+      description: Add only redacted examples or screenshots.

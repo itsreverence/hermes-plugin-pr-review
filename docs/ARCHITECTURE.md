@@ -21,7 +21,7 @@ Hermes PR Review is a local-first, public-beta candidate review workflow for Git
 plugins/pr_review/        plugin implementation
 plugins/pr_review/evals/  public OSS eval manifest seed data
 tests/plugins/            focused plugin tests
-docs/                     product/workflow notes copied from the draft upstream work
+docs/                     versioned installation, operations, architecture, testing, and release guidance
 ```
 
 The implementation is split by subsystem: `core.py` owns GitHub review context,

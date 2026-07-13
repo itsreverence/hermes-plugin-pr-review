@@ -1,56 +1,58 @@
 # Hermes PR Review
 
-Public-beta candidate, local-first PR review workflow for Hermes Agent.
+Hermes-first pull request reviews with structured diagnostics, local artifacts, and opt-in GitHub automation.
 
-The reviewer uses Hermes' configured model/auth, GitHub CLI, trusted base-branch repository docs, structured diagnostics, and local artifacts. It does **not** execute pull-request code. GitHub posting is disabled for newly enabled repositories until the operator explicitly turns it on.
+[![CI](https://github.com/itsreverence/hermes-plugin-pr-review/actions/workflows/ci.yml/badge.svg)](https://github.com/itsreverence/hermes-plugin-pr-review/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> **Availability:** this MIT-licensed repository is the public-beta distribution. The onboarding flow is implemented and dogfooded; keep GitHub posting disabled until a repository-specific canary earns it.
+> **Public beta:** install from `main`. There is not yet a tagged stable release. GitHub comment posting is disabled by default.
 
-## Supported public-beta path
+Hermes PR Review uses your configured Hermes model and authentication, gathers pull-request data through `gh`, loads reviewer instructions from the trusted base branch, and writes inspectable local artifacts. It does **not** execute pull-request code.
+
+## Requirements
 
 - Hermes Agent with third-party plugin installation
-- Linux with user systemd for the managed webhook receiver
 - Git and authenticated GitHub CLI (`gh`)
-- Tailscale Funnel, or another public HTTPS reverse proxy
-- CodeGraph is optional; baseline reviews work without Node/npm or a graph index
+- Linux with user systemd for managed webhook-service installation
+- Tailscale Funnel or another HTTPS reverse proxy for event-driven automation
+- Optional CodeGraph CLI and local index for graph-backed context
 
-macOS and other process managers can run `webhook-serve` directly, but automatic service installation currently supports Linux user systemd only.
+Direct reviews work without systemd, a public webhook, or CodeGraph.
 
 ## Install
-
-Install the plugin directly from the repository subdirectory:
 
 ```bash
 hermes plugins install itsreverence/hermes-plugin-pr-review/plugins/pr_review --enable
 hermes pr-review doctor
 ```
 
-Nested-plugin installs are updated by reinstalling the public identifier. The
-current Hermes `plugins update` command requires a plugin-local `.git`
-directory, which nested installs intentionally do not retain:
+Nested plugin installs update by reinstalling the same identifier:
 
 ```bash
-hermes plugins install \
-  itsreverence/hermes-plugin-pr-review/plugins/pr_review \
-  --force --enable
-hermes plugins remove pr-review
+hermes plugins install itsreverence/hermes-plugin-pr-review/plugins/pr_review --force --enable
 ```
 
-For local development, clone this repository and run `./scripts/install-dev.sh`; that symlinks the checkout into the active Hermes profile. Do not use the development installer for a normal user installation.
+## First no-post review
 
-## Zero-to-first-review quickstart
+```bash
+hermes pr-review review OWNER/REPO#123 --json
+```
 
-The commands below keep posting disabled and preserve the webhook secret locally.
+Review artifacts are written under:
 
-### 1. Enable a repository
+```text
+~/.hermes/pr-reviewer/reviews/OWNER_REPO/PR/HEADSHA/
+```
+
+Typical artifacts include the collected context, manifest, structured findings, rendered review, and trace. No GitHub comment is created unless `--post-comment` is explicitly supplied.
+
+To enable a repository for watched or webhook reviews while keeping posting off:
 
 ```bash
 hermes pr-review enable OWNER/REPO --local-repo /path/to/checkout
 ```
 
-### 2. Optionally prepare CodeGraph
-
-Skip this step for baseline reviews. To enable graph-backed auto mode:
+The local checkout supplies trusted base-branch context. Optional graph setup:
 
 ```bash
 hermes pr-review graph-setup --local-repo /path/to/checkout --install-missing
@@ -60,81 +62,47 @@ hermes pr-review enable OWNER/REPO \
   --graph-context-binary codegraph
 ```
 
-`enable` resolves and persists the stable CodeGraph launcher so webhook reviews do not depend on a login-shell `PATH`.
-Remove an obsolete persisted launcher with `hermes pr-review enable OWNER/REPO --clear-graph-context-binary`.
+## Automated webhook path
 
-### 3. Install the durable receiver
+The supported Linux path is:
 
-```bash
-hermes pr-review service install
-hermes pr-review service status
-hermes pr-review service restart
-```
+1. enable a repository;
+2. install the user-systemd receiver;
+3. expose it through Tailscale Funnel or another HTTPS proxy;
+4. plan and explicitly apply the GitHub webhook;
+5. verify a real opened/synchronized pull-request delivery in no-post mode.
 
-This creates a managed **user** systemd unit, creates or reuses a mode-`0600` webhook secret, enables the unit, and starts or restarts the receiver. It never installs a root service.
+See [Installation](docs/INSTALLATION.md) for the complete setup and [Operations](docs/OPERATIONS.md) for status, recovery, rollback, and removal.
 
-### 4. Expose the receiver through Tailscale Funnel
+## Safety defaults
 
-```bash
-hermes pr-review funnel setup
-hermes pr-review funnel setup --apply
-```
+- GitHub posting defaults to off per repository.
+- Remote onboarding and destructive operations require `--apply`.
+- Truncated diffs are not posted by watched/webhook reviews.
+- Webhook requests require GitHub SHA-256 HMAC verification.
+- The managed receiver binds to loopback and runs as a user service, never root.
+- Pull-request code is treated as untrusted and is not executed.
+- Reviewer config and instructions come from the trusted base branch.
 
-The first command verifies the local receiver and shows the plan without changing Tailscale. It refuses to replace an unrelated existing Funnel route. `--apply` configures Funnel in noninteractive background mode, discovers the public hostname, and verifies the public `/healthz` endpoint. Copy the returned `webhook_url`.
+Before enabling posting, inspect several no-post reviews and prove a repository-specific webhook canary. See [Testing](docs/TESTING.md).
 
-If Tailscale is not appropriate, expose `http://127.0.0.1:8787` through another HTTPS proxy and use `https://YOUR_HOST/webhooks/github` below.
+## Privacy
 
-### 5. Plan and create the GitHub webhook
+Review artifacts, webhook payloads, service journals, and status output may contain repository names, PR text, paths, URLs, diagnostics, and review content. Never publish the webhook secret, provider credentials, raw private-repository payloads, or an unreviewed copy of `~/.hermes/pr-reviewer/`.
 
-Plan mode performs no remote mutation:
+## Documentation and support
 
-```bash
-hermes pr-review webhook setup OWNER/REPO \
-  --url https://YOUR_HOST/webhooks/github
-```
+- [Installation](docs/INSTALLATION.md)
+- [Operations and rollback](docs/OPERATIONS.md)
+- [Architecture and trust boundaries](docs/ARCHITECTURE.md)
+- [Testing, dogfood, and posting canaries](docs/TESTING.md)
+- [Release status and process](docs/RELEASING.md)
+- [Support](SUPPORT.md)
+- [Security policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md)
 
-Review the plan, then explicitly apply it:
-
-```bash
-hermes pr-review webhook setup OWNER/REPO \
-  --url https://YOUR_HOST/webhooks/github \
-  --apply
-```
-
-The webhook is active, uses `application/json`, verifies TLS, subscribes only to pull-request events, and receives the secret through `gh api` stdin rather than command-line arguments or normal output.
-
-### 6. Verify the whole installation
-
-```bash
-hermes pr-review doctor
-hermes pr-review service status
-hermes pr-review funnel status --verify
-hermes pr-review webhook status OWNER/REPO
-hermes pr-review status --github-repo OWNER/REPO --github-hook-id HOOK_ID
-```
-
-Open or synchronize a pull request, then rerun `status`. A real graph-backed review is green only when the review succeeded, was not a `--no-llm` smoke, and recorded collected graph context.
-
-## Safe rollback
-
-To roll back the plugin payload to a known commit, clone that public commit and
-install its plugin subdirectory explicitly:
-
-```bash
-git clone https://github.com/itsreverence/hermes-plugin-pr-review.git \
-  /tmp/hermes-plugin-pr-review-rollback
-git -C /tmp/hermes-plugin-pr-review-rollback checkout --detach COMMIT_SHA
-hermes plugins install \
-  "file:///tmp/hermes-plugin-pr-review-rollback#plugins/pr_review" \
-  --force --enable
-```
-
-This replaces only the installed plugin directory. Repository registry,
-webhook secret, delivery spool, and review artifacts under
-`~/.hermes/pr-reviewer/` are preserved. Reinstall the public identifier shown
-above to return to the latest release.
-
-Remote and destructive operations require `--apply`:
+## Uninstall
 
 ```bash
 hermes pr-review webhook remove OWNER/REPO --hook-id HOOK_ID --apply
@@ -143,146 +111,4 @@ hermes pr-review service remove --apply
 hermes plugins remove pr-review
 ```
 
-The service removal preserves the webhook secret and local review artifacts. There is intentionally no automated Funnel reset: Tailscale's reset operation is device-wide and could remove unrelated routes. Inspect `tailscale funnel status` and remove only the reviewer mapping using the scoped operation supported by the Tailscale version installed on that device.
-
-## Useful commands
-
-```bash
-hermes pr-review doctor --json
-hermes pr-review review OWNER/REPO#123 --json
-hermes pr-review watch-run --no-llm --json
-hermes pr-review service logs --lines 100
-hermes pr-review graph-health --local-repo /path/to/checkout --json
-```
-
-`--post-comment` is intentionally omitted. Use it only after reviewing local no-post artifacts. If a review diff was truncated, posting is refused unless `--allow-truncated-post` is also passed after manual review.
-
-Artifacts are written under:
-
-```text
-~/.hermes/pr-reviewer/reviews/OWNER_REPO/PR/HEADSHA/
-```
-
-Typical outputs include `context.md`, `context-manifest.json`, `findings.json`, `review.md`, `review-trace.json`, and graph-context files when CodeGraph is used.
-
-## Privacy and troubleshooting output
-
-Receiver journals, status JSON, delivery spool entries, and review artifacts may contain repository names, PR URLs, paths, diagnostics, and review text. They do not intentionally print the webhook secret, but inspect and redact all output before sharing it publicly.
-
-Start with bounded diagnostics and share only the smallest relevant excerpt:
-
-```bash
-hermes pr-review doctor --json
-hermes pr-review service status --json
-hermes pr-review service logs --lines 100
-hermes pr-review funnel status --verify --json
-```
-
-Never publish `~/.hermes/pr-reviewer/webhook-secret`, raw webhook payloads, provider credentials, or an unreviewed copy of `~/.hermes/pr-reviewer/`.
-
-## Optional indexed graph context
-
-`--graph-context` is an experimental, opt-in path for adding compact structural codebase context from an explicit local checkout (`--local-repo`). `--graph-context-auto` is the safer repo-default shape: it uses CodeGraph only when that checkout already has an initialized `.codegraph/` index and falls back to baseline if the index is missing/unhealthy. The plugin does not run provider installers, edit MCP/agent config, execute PR code, or post comments because graph context was collected.
-
-Provider:
-
-- Graph context uses the CodeGraph CLI (`CODEGRAPH_BINARY` or `codegraph` on `PATH`) and allows its local `.codegraph/` index directory as the only expected checkout mutation.
-
-Use `--graph-context-binary /path/to/binary` to point at the CodeGraph executable. For watch/webhook services, persist a stable launcher with `hermes pr-review enable OWNER/REPO --graph-context-binary /absolute/path/to/codegraph`; the launcher directory is prepended to the subprocess `PATH` so interpreter-backed npm/mise launchers can find their sibling runtime without a login shell. The default index mode hint is `fast`. Injected graph markdown is capped by `--max-graph-context-chars` (default: 12000); full graph markdown/raw summaries are still written as local artifacts with absolute checkout/binary paths omitted.
-
-Check whether a checkout is ready for auto mode before enabling it:
-
-```bash
-hermes pr-review graph-health --local-repo /path/to/checkout --json
-hermes pr-review graph-health --local-repo /path/to/checkout --sync
-```
-
-For one-command local setup, use `graph-setup`. It can install the CodeGraph CLI with npm when explicitly requested, initializes/syncs `.codegraph/`, and ignores the local index via `.git/info/exclude` by default so setup does not dirty the project:
-
-```bash
-hermes pr-review graph-setup --local-repo /path/to/checkout --install-missing
-```
-
-Use `--ignore-mode gitignore` when the project wants to commit `.codegraph/` to `.gitignore`; use `--ignore-mode none` if the repo already ignores the index another way.
-
-The health check reports checkout cleanliness, HEAD, `.codegraph/` presence/size, CodeGraph status counts, optional sync result, and whether the checkout is ready for `--graph-context-auto`.
-
-## Auto-review watched repos
-
-`watch-run` is the local-first equivalent of “enable this reviewer on selected repos.” It polls configured repositories for open PRs, reviews PR heads it has not seen before, and records reviewed heads so repeat runs do not spam the same commit.
-
-For event-driven pilots, `webhook-event` processes one GitHub `pull_request` webhook payload through the same local registry/state/review path. `webhook-serve` is the small local HTTP receiver for GitHub webhooks; it is designed to bind to localhost and sit behind Tailscale Funnel or another HTTPS proxy. Both stay inside the plugin instead of requiring Hermes core changes.
-
-Create the local registry with `enable`; posting remains disabled unless explicitly changed:
-
-```bash
-hermes pr-review enable OWNER/REPO --local-repo /path/to/checkout
-```
-
-The managed receiver, Funnel, and GitHub commands from the quickstart all use this same registry and secret. For temporary debugging, the lower-level commands remain available:
-
-```bash
-hermes pr-review watch-run --no-llm --json
-hermes pr-review webhook-event --payload /tmp/github-pull-request.json --event pull_request --delivery DELIVERY_ID --json
-hermes pr-review webhook-serve --host 127.0.0.1 --port 8787 --secret-file ~/.hermes/pr-reviewer/webhook-secret
-```
-
-The registry may also record the public webhook URL and GitHub hook ID after `webhook setup --apply`, allowing later diagnostics without storing the webhook secret in JSON.
-
-`webhook-serve` verifies GitHub's SHA-256 signature, accepts only the GitHub webhook path and health endpoint, caps request sizes and read times, and durably spools accepted deliveries before acknowledgement. A bounded worker serializes review/watch-state updates across receiver processes; startup recovery safely replays stranded accepted deliveries after the health listener binds. Unsupported events/actions are ignored before entering the review queue, and supported requests receive a busy response instead of creating unbounded concurrent reviews. Detailed durability, locking, and replay semantics live in `docs/ARCHITECTURE.md` and `docs/WORKFLOW.md`.
-
-
-`webhook-event` accepts GitHub `pull_request` payloads for `opened`, `synchronize`, `reopened`, and `ready_for_review`. It ignores unsupported actions, disabled repos, draft PRs unless `reviewDrafts: true`, PRs that are no longer open, stale payload heads that no longer match GitHub's current PR head, and already-reviewed heads. It records the delivery/action metadata into watch state when it reviews or fails a head, so later status/history work can explain what triggered the run.
-
-Use `hermes pr-review status` (alias: `webhook-status`) to inspect the local setup without digging through JSON files. It reports registry entries, per-repo graph readiness and setup next steps, secret-file safety, receiver `/healthz`, watch-state review counts, recent delivery spool status, and actionable next steps for WARN/FAIL states. Receiver downtime and missing first-run delivery/state files are warnings; invalid secret paths are failures.
-
-Registry notes:
-
-- `postComment` defaults to `false`; turn it on per repo only after no-post dogfood looks good.
-- `postFindingsOnly` defaults to `true`; when posting is enabled through watch/webhook canaries, clean zero-finding reviews still record local artifacts and update an existing managed comment if present, but skip creating new “looks good” comments. Set `postFindingsOnly: false` only after a repo graduates to always-post managed summary comments.
-- Truncated-diff posting is blocked by default for watch/webhook runs; only direct `review --post-comment --allow-truncated-post` can override it after manual artifact review.
-- `graphContext: "auto"` uses CodeGraph only when the configured local checkout has a healthy existing `.codegraph/` index.
-- State is saved to `~/.hermes/pr-reviewer/watch-state.json`; the same PR head is skipped until it changes or `--force` is passed.
-
-## Local development
-
-This repo currently expects a local Hermes Agent checkout for plugin APIs during tests.
-
-```bash
-export HERMES_AGENT_SRC=/path/to/hermes-agent
-PYTHONPATH="$PWD:$HERMES_AGENT_SRC" python -m pytest tests/plugins -q
-PYTHONPATH="$PWD:$HERMES_AGENT_SRC" python -m py_compile plugins/pr_review/*.py
-```
-
-## Development setup example
-
-Expected development setup:
-
-```text
-~/.hermes/plugins/pr-review -> /path/to/hermes-pr-review/plugins/pr_review
-hermes plugins list: pr-review enabled, source=user
-hermes pr-review setup: gh auth ok
-hermes pr-review eval-manifest --json: success true, bundled corpus validates
-hermes pr-review review NousResearch/hermes-agent#50842 --json: success true, no post
-```
-
-## Product boundary
-
-Target for now:
-
-```text
-external/local Hermes plugin → dogfood → harden → maybe upstream later as opt-in plugin/docs/API proposal
-```
-
-Not the target yet:
-
-```text
-default-enabled Hermes core feature
-```
-
-See:
-
-- `docs/ARCHITECTURE.md` — concise system map
-- `docs/WORKFLOW.md` — install/test/dogfood workflow
-- `docs/PUBLIC_RELEASE.md` — distribution-readiness gates and release decisions
-- `plugins/pr_review/evals/public_prs.json` — bundled public OSS eval corpus
+Service removal preserves the local webhook secret and review artifacts. The plugin intentionally does not perform a device-wide Tailscale Funnel reset.
