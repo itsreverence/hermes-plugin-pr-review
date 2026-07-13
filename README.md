@@ -38,7 +38,7 @@ hermes plugins install itsreverence/hermes-plugin-pr-review/plugins/pr_review --
 hermes pr-review review OWNER/REPO#123 --json
 ```
 
-Review artifacts are written under:
+Review artifacts are written as owner-only files (`0600`); newly created managed directories use `0700`:
 
 ```text
 ~/.hermes/pr-reviewer/reviews/OWNER_REPO/PR/HEADSHA/
@@ -88,7 +88,7 @@ Before enabling posting, inspect several no-post reviews and prove a repository-
 
 ## Privacy
 
-Review artifacts, webhook payloads, service journals, and status output may contain repository names, PR text, paths, URLs, diagnostics, and review content. Never publish the webhook secret, provider credentials, raw private-repository payloads, or an unreviewed copy of `~/.hermes/pr-reviewer/`.
+Review artifacts, dogfood summaries and copied artifacts, webhook payloads, service journals, and status output may contain repository names, PR text, paths, URLs, diagnostics, and review content. New artifact outputs use owner-only files and directories. Never publish the webhook secret, provider credentials, raw private-repository payloads, or an unreviewed artifact directory.
 
 ## Documentation and support
 

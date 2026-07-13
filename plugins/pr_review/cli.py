@@ -434,7 +434,6 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     enable.add_argument("--clear-graph-context-binary", action="store_true", help="Remove the persisted CodeGraph launcher")
     enable.add_argument("--mode", choices=("light", "balanced", "strict", "security"), default=None, help="Review mode to store (default on create: balanced)")
     enable.add_argument("--max-diff-chars", type=int, default=None, help="Max diff chars to store (default on create: 120000)")
-    enable.add_argument("--print-secret", action="store_true", help="Print the webhook secret value; otherwise only print its file path")
     enable.add_argument("--json", action="store_true", help="Print machine-readable setup summary")
 
     disable = subs.add_parser("disable", help="Disable a repository locally while preserving config and artifacts")

@@ -23,7 +23,13 @@ hermes pr-review status --github-repo OWNER/REPO --github-hook-id HOOK_ID
 ~/.hermes/pr-reviewer/reviews/
 ```
 
-Treat this directory as private. It may contain repository metadata, webhook payloads, diagnostics, and review content.
+Treat this directory as private. New and rewritten review artifacts use owner-only files (`0600`), and newly created artifact directories use `0700`. Existing directories are not silently chmodded. If upgrading from an earlier beta, tighten existing state once:
+
+```bash
+chmod -R go-rwx ~/.hermes/pr-reviewer
+```
+
+It may contain repository metadata, webhook payloads, diagnostics, and review content.
 
 ## Posting policy
 

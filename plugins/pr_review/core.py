@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import base64
+import errno
 import fnmatch
 import hashlib
 import json
+import os
 import re
 import subprocess
+import tempfile
 from urllib.parse import quote
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -1064,6 +1067,89 @@ def normalize_review(raw: Any) -> Dict[str, Any]:
     return normalized
 
 
+def _reject_symlink_components(path: Path) -> None:
+    """Fail closed when any existing component of a write path is a symlink."""
+    absolute = path.absolute()
+    current = Path(absolute.anchor)
+    for part in absolute.parts[1:]:
+        current /= part
+        if current.is_symlink():
+            raise ValueError(f"review artifact path must not contain symlinks: {current}")
+
+
+def _fsync_directory(path: Path) -> None:
+    if os.name == "nt":  # Windows does not support opening directories for fsync.
+        return
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        fd = os.open(path, flags)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        unsupported = {errno.EBADF, errno.EINVAL, errno.ENOTSUP}
+        if hasattr(errno, "EOPNOTSUPP"):
+            unsupported.add(errno.EOPNOTSUPP)
+        if exc.errno not in unsupported:
+            raise
+
+
+def _fchmod(fd: int, mode: int) -> None:
+    if hasattr(os, "fchmod"):
+        os.fchmod(fd, mode)
+
+
+def _secure_artifact_directory(path: Path) -> None:
+    """Create owner-only directories without changing permissions on existing ancestors."""
+    absolute = path.absolute()
+    missing: List[Path] = []
+    current = absolute
+    while not current.exists():
+        if current.is_symlink():
+            raise ValueError(f"review artifact path must not contain symlinks: {current}")
+        missing.append(current)
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    _reject_symlink_components(current)
+    if current.exists() and not current.is_dir():
+        raise ValueError(f"review artifact directory is not a directory: {current}")
+    for directory in reversed(missing):
+        directory.mkdir(mode=0o700)
+        _reject_symlink_components(directory)
+
+
+def _write_private_text(path: Path, value: str) -> None:
+    """Atomically replace a private artifact without a world-readable window."""
+    _secure_artifact_directory(path.parent)
+    if path.is_symlink():
+        raise ValueError(f"review artifact file must not be a symlink: {path}")
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            _fchmod(handle.fileno(), 0o600)
+            handle.write(value)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if path.is_symlink():
+            raise ValueError(f"review artifact file must not be a symlink: {path}")
+        temporary.replace(path)
+        _fsync_directory(path.parent)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def write_artifacts(
     out_dir: Path,
     *,
@@ -1072,7 +1158,7 @@ def write_artifacts(
     review: Dict[str, Any],
     graph_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, str]:
-    out_dir.mkdir(parents=True, exist_ok=True)
+    _secure_artifact_directory(out_dir)
     review = normalize_review(review)
     paths = {
         "context": out_dir / "context.md",
@@ -1084,14 +1170,14 @@ def write_artifacts(
     if graph_context:
         paths["graph_context"] = out_dir / "graph-context.json"
         paths["graph_context_markdown"] = out_dir / "graph-context.md"
-    paths["context"].write_text(context, encoding="utf-8")
-    paths["manifest"].write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
-    paths["findings"].write_text(json.dumps(review, indent=2, sort_keys=True), encoding="utf-8")
-    paths["review"].write_text(render_markdown(review, manifest), encoding="utf-8")
-    paths["trace"].write_text(json.dumps(build_review_trace(manifest), indent=2, sort_keys=True), encoding="utf-8")
+    _write_private_text(paths["context"], context)
+    _write_private_text(paths["manifest"], json.dumps(manifest, indent=2, sort_keys=True))
+    _write_private_text(paths["findings"], json.dumps(review, indent=2, sort_keys=True))
+    _write_private_text(paths["review"], render_markdown(review, manifest))
+    _write_private_text(paths["trace"], json.dumps(build_review_trace(manifest), indent=2, sort_keys=True))
     if graph_context:
-        paths["graph_context"].write_text(json.dumps(graph_context.get("raw") or {}, indent=2, sort_keys=True), encoding="utf-8")
-        paths["graph_context_markdown"].write_text(str(graph_context.get("markdown") or ""), encoding="utf-8")
+        _write_private_text(paths["graph_context"], json.dumps(graph_context.get("raw") or {}, indent=2, sort_keys=True))
+        _write_private_text(paths["graph_context_markdown"], str(graph_context.get("markdown") or ""))
     return {name: str(path) for name, path in paths.items()}
 
 

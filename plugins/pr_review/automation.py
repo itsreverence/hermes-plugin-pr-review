@@ -1987,7 +1987,7 @@ def cmd_enable(args: argparse.Namespace) -> int:
         elif clear_graph_context_binary:
             entry.pop("graphContextBinary", None)
         repos[repo_key] = entry
-        secret_path, secret, secret_created = _ensure_webhook_secret(getattr(args, "secret_file", None))
+        secret_path, _secret, secret_created = _ensure_webhook_secret(getattr(args, "secret_file", None))
         raw["repos"] = repos
         _write_json_file(config_path, raw)
         webhook_url = str(getattr(args, "webhook_url", "") or "").strip() or None
@@ -2016,8 +2016,6 @@ def cmd_enable(args: argparse.Namespace) -> int:
                 "tailscale_funnel": "hermes pr-review funnel setup",
             },
         }
-        if bool(getattr(args, "print_secret", False)):
-            summary["secret"] = secret
     except Exception as exc:
         if getattr(args, "json", False):
             print(json.dumps({"success": False, "error": str(exc)}, indent=2, sort_keys=True))

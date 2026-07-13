@@ -2,10 +2,100 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
+
+import pytest
 
 from plugins.pr_review import cli as pr_review_cli
 from plugins.pr_review import dogfood
+
+
+def test_copy_dogfood_artifacts_stays_owner_only(tmp_path: Path):
+    source = tmp_path / "source.md"
+    source.write_text("private review", encoding="utf-8")
+    payload = {"paths": {"review": str(source)}}
+    output_dir = tmp_path / "runs"
+
+    dogfood._copy_dogfood_artifacts(payload, output_dir=output_dir, run_id="run-1", case_id="case", variant="baseline")
+
+    artifact_root = output_dir / "run-1-artifacts"
+    copied = Path(payload["paths"]["review"])
+    assert artifact_root.stat().st_mode & 0o777 == 0o700
+    assert copied.stat().st_mode & 0o777 == 0o600
+    assert copied.read_text(encoding="utf-8") == "private review"
+
+
+def test_copy_dogfood_artifacts_rejects_symlinked_output(tmp_path: Path):
+    source = tmp_path / "source.md"
+    source.write_text("private review", encoding="utf-8")
+    payload = {"paths": {"review": str(source)}}
+    output_dir = tmp_path / "runs"
+    output_dir.mkdir()
+    target = tmp_path / "outside"
+    target.mkdir()
+    (output_dir / "run-1-artifacts").symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="must not contain symlinks"):
+        dogfood._copy_dogfood_artifacts(payload, output_dir=output_dir, run_id="run-1", case_id="case", variant="baseline")
+
+    assert list(target.iterdir()) == []
+
+
+def test_write_dogfood_summary_rejects_symlinked_observation_lock(monkeypatch, tmp_path: Path):
+    output_dir = tmp_path / "runs"
+    output_dir.mkdir()
+    victim = tmp_path / "outside.lock"
+    victim.write_text("unchanged", encoding="utf-8")
+    (output_dir / "observations.lock").symlink_to(victim)
+    monkeypatch.setattr(dogfood, "_render_dogfood_markdown", lambda _summary: "summary\n")
+    monkeypatch.setattr(dogfood, "_observation_record", lambda _summary: {})
+
+    with pytest.raises(ValueError, match="observation lock must not be a symlink"):
+        dogfood._write_dogfood_summary({"run_id": "run-1"}, output_dir)
+
+    assert victim.read_text(encoding="utf-8") == "unchanged"
+
+
+def test_observation_lock_swap_cannot_chmod_or_write_victim(monkeypatch, tmp_path: Path):
+    output_dir = tmp_path / "runs"
+    output_dir.mkdir()
+    lock_path = output_dir / "observations.lock"
+    lock_path.write_text("", encoding="utf-8")
+    victim = tmp_path / "victim"
+    victim.write_text("do not touch", encoding="utf-8")
+    victim.chmod(0o644)
+    real_open = os.open
+    swapped = False
+
+    def swapping_open(path, flags, mode=0o777):
+        nonlocal swapped
+        fd = real_open(path, flags, mode)
+        if Path(path) == lock_path and not swapped:
+            swapped = True
+            lock_path.unlink()
+            lock_path.symlink_to(victim)
+        return fd
+
+    monkeypatch.setattr(dogfood.os, "open", swapping_open)
+    monkeypatch.setattr(dogfood, "_observation_record", lambda _summary: {})
+    dogfood._write_observation_history({"run_id": "run-1"}, output_dir)
+
+    assert victim.read_text(encoding="utf-8") == "do not touch"
+    assert victim.stat().st_mode & 0o777 == 0o644
+
+
+def test_observation_lock_closes_fd_when_fchmod_fails(monkeypatch, tmp_path: Path):
+    output_dir = tmp_path / "runs"
+    closed = []
+    real_close = os.close
+    monkeypatch.setattr(dogfood.core, "_fchmod", lambda _fd, _mode: (_ for _ in ()).throw(OSError("chmod failed")))
+    monkeypatch.setattr(dogfood.os, "close", lambda fd: (closed.append(fd), real_close(fd))[1])
+
+    with pytest.raises(OSError, match="chmod failed"):
+        dogfood._write_observation_history({"run_id": "run-1"}, output_dir)
+
+    assert len(closed) == 1
 
 
 def test_cmd_dogfood_run_writes_no_post_summary(monkeypatch, tmp_path: Path):

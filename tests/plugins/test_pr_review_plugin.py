@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import subprocess
@@ -198,6 +199,81 @@ def test_write_artifacts_renders_markdown(tmp_path: Path):
     assert "**Confidence Score:**" in rendered
     assert "Important files changed" in rendered
     assert "Contains reviewer finding(s): Guard missing." in rendered
+    assert tmp_path.stat().st_mode & 0o777 == 0o700
+    assert all(Path(path).stat().st_mode & 0o777 == 0o600 for path in paths.values())
+
+
+def test_write_artifacts_repairs_permissions_under_permissive_umask(tmp_path: Path):
+    out_dir = tmp_path / "owner_repo" / "7" / "head"
+    out_dir.mkdir(parents=True)
+    out_dir.chmod(0o755)
+    existing = out_dir / "context.md"
+    existing.write_text("old", encoding="utf-8")
+    existing.chmod(0o644)
+    previous_umask = os.umask(0o022)
+    try:
+        paths = core.write_artifacts(
+            out_dir,
+            context="private context",
+            manifest={"head_sha": "abcdef", "docs_loaded": [], "skipped_files": [], "diff_truncated": False},
+            review={"verdict": "comment", "risk": "low", "summary": "Clean.", "findings": [], "verification_notes": []},
+        )
+    finally:
+        os.umask(previous_umask)
+
+    assert out_dir.stat().st_mode & 0o777 == 0o755
+    assert all(Path(path).stat().st_mode & 0o777 == 0o600 for path in paths.values())
+    assert Path(paths["context"]).read_text(encoding="utf-8") == "private context"
+
+
+def test_write_artifacts_rejects_symlinked_managed_directory(monkeypatch, tmp_path: Path):
+    hermes_home = tmp_path / "hermes"
+    target = tmp_path / "outside"
+    target.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    out_dir = core.artifacts_root() / "owner_repo" / "9" / "head"
+    out_dir.parent.mkdir(parents=True)
+    out_dir.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="must not contain symlinks"):
+        core.write_artifacts(
+            out_dir,
+            context="private context",
+            manifest={"head_sha": "abcdef", "docs_loaded": [], "skipped_files": [], "diff_truncated": False},
+            review={"verdict": "comment", "risk": "low", "summary": "Clean.", "findings": [], "verification_notes": []},
+        )
+
+    assert not (target / "context.md").exists()
+
+
+def test_write_artifacts_rejects_symlinked_artifact_file(tmp_path: Path):
+    target = tmp_path / "outside.txt"
+    target.write_text("do not replace", encoding="utf-8")
+    context_path = tmp_path / "context.md"
+    context_path.symlink_to(target)
+
+    with pytest.raises(ValueError, match="must not be a symlink"):
+        core.write_artifacts(
+            tmp_path,
+            context="private context",
+            manifest={"head_sha": "abcdef", "docs_loaded": [], "skipped_files": [], "diff_truncated": False},
+            review={"verdict": "comment", "risk": "low", "summary": "Clean.", "findings": [], "verification_notes": []},
+        )
+
+    assert target.read_text(encoding="utf-8") == "do not replace"
+
+
+def test_fsync_directory_ignores_unsupported_filesystem_error(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(core.os, "fsync", lambda _fd: (_ for _ in ()).throw(OSError(errno.EINVAL, "unsupported")))
+
+    core._fsync_directory(tmp_path)
+
+
+def test_fsync_directory_propagates_real_io_error(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(core.os, "fsync", lambda _fd: (_ for _ in ()).throw(OSError(errno.EIO, "I/O error")))
+
+    with pytest.raises(OSError, match="I/O error"):
+        core._fsync_directory(tmp_path)
 
 
 def test_render_markdown_reports_observed_check_counts():
