@@ -9,6 +9,14 @@ Hermes-first pull request reviews with structured diagnostics, local artifacts, 
 
 Hermes PR Review uses your configured Hermes model and authentication, gathers pull-request data through `gh`, loads reviewer instructions from the trusted base branch, and writes inspectable local artifacts. It does **not** execute pull-request code.
 
+## Manual skill-first candidate
+
+A manual-only replacement candidate lives in [`skills/hermes-pr-review`](skills/hermes-pr-review/SKILL.md).
+It uses a shared skill plus small Python helpers for pinned GitHub reads, SQLite
+claims/deduplication, and local reports. It does not install a plugin, execute PR
+code, post to GitHub, or schedule scans. See [candidate operation and scope](docs/SKILL_FIRST.md).
+The plugin instructions below remain unchanged; this candidate is not a live cutover.
+
 ## Requirements
 
 - Hermes Agent with third-party plugin installation

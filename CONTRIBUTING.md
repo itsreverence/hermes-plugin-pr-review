@@ -15,13 +15,17 @@ This repository currently tests against a pinned Hermes Agent API checkout. Poin
 
 ```bash
 export HERMES_AGENT_SRC=/path/to/hermes-agent
-PYTHONPATH="$PWD:$HERMES_AGENT_SRC" python -m pytest tests/plugins -q
+PYTHONPATH="$PWD:$HERMES_AGENT_SRC" python -m pytest tests/plugins tests/skill_first -q
 PYTHONPATH="$PWD:$HERMES_AGENT_SRC" python -m py_compile plugins/pr_review/*.py
-ruff check plugins tests scripts
+ruff check plugins tests scripts skills
 git diff --check
 ```
 
-For a development installation in the active Hermes profile:
+Use Ruff 0.15.10 to match CI. The manual candidate can be tested independently
+with `python -m pytest tests/skill_first -q`; it does not require Hermes imports.
+See [manual candidate scope](docs/SKILL_FIRST.md) before any installation.
+
+For a development installation of the legacy plugin in the active Hermes profile:
 
 ```bash
 ./scripts/install-dev.sh

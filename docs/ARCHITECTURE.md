@@ -33,6 +33,15 @@ inspection/setup, and explicit plan/apply GitHub webhook management; `dogfood.py
 artifacts, observations, and scoring; `cli.py` owns command registration, review
 orchestration, and thin dependency-injecting adapters for extracted subsystems.
 
+## Manual skill-first candidate
+
+`skills/hermes-pr-review/` contains the parallel, manual-only candidate. Its skill
+owns review judgment and its standalone Python helpers own GitHub reads, SQLite
+claims, deduplication, artifact writes, and result validation. It has no plugin
+or receiver dependency and no scheduler or GitHub mutation implementation.
+See [candidate design and scope](SKILL_FIRST.md). The legacy path below remains
+intact until a separately approved cutover.
+
 ## Onboarding side-effect boundary
 
 - `doctor`, service/Funnel status, webhook status, and webhook setup without `--apply` are read-only.
