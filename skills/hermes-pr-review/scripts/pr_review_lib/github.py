@@ -64,7 +64,12 @@ def parse_ref(text: str) -> str:
     return f'{match["owner"]}/{match["repo"]}#{match["number"]}'
 
 
-def _safe_path(value: object, *, pattern: bool = False) -> bool:
+def _safe_path(value: object) -> bool:
+    """Validate literal Git paths, not glob syntax; never normalize or expand.
+
+    Brackets and asterisks are valid filename characters. Tree/compare paths
+    remain exact dictionary keys and are percent-encoded only for REST reads.
+    """
     if not isinstance(value, str) or not value or len(value) > 512 or value != value.strip():
         return False
     if value.startswith(("/", "~", "-")) or "\\" in value or "%" in value:
@@ -73,7 +78,18 @@ def _safe_path(value: object, *, pattern: bool = False) -> bool:
         return False
     if any(part in {"", ".", ".."} for part in value.split("/")):
         return False
-    return pattern or not any(char in value for char in "*[]")
+    return True
+
+
+def _safe_selector(value: object, *, pattern: bool = False) -> bool:
+    """Preserve conservative caller/config syntax, separately from Git names.
+
+    Explicit source/doc selectors still disallow glob-looking spellings rather
+    than interpreting caller intent. Only ignorePatterns uses glob matching.
+    This restriction must not invalidate unrelated or changed tree entries.
+    """
+    return (isinstance(value, str) and _safe_path(value) and
+            (pattern or not any(char in value for char in "*[]")))
 
 
 def _object_pairs(pairs):
@@ -300,7 +316,7 @@ class GitHub:
         if stage not in {"triage", "review"}:
             raise ValueError("invalid collection stage")
         if (not isinstance(source_paths, (tuple, list)) or len(source_paths) > MAX_EXTRA_SOURCE_PATHS or
-                any(not _safe_path(path) for path in source_paths)):
+                any(not _safe_selector(path) for path in source_paths)):
             raise ValueError("source_paths must contain at most 24 safe literal repository paths")
         if stage == "triage" and source_paths:
             raise ValueError("extra source paths require review stage")
@@ -328,7 +344,7 @@ class GitHub:
                 for key, max_items in (("extraDocPaths", 24), ("ignorePatterns", 64)):
                     values = config.get(key, [])
                     if (not isinstance(values, list) or len(values) > max_items or
-                            any(not _safe_path(value, pattern=(key == "ignorePatterns")) for value in values)):
+                            any(not _safe_selector(value, pattern=(key == "ignorePatterns")) for value in values)):
                         raise ValueError
                 result["policy"].update(config)
             except (ValueError, RecursionError):

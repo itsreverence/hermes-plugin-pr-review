@@ -3,7 +3,7 @@ import json
 import re
 from pathlib import Path
 
-from .artifacts import digest, parse_json, read_json, read_text, write_json, write_text
+from .artifacts import MAX_ARTIFACT_BYTES, digest, parse_json, read_json, read_text, serialize_json, write_json, write_text
 from .state import StateError
 
 
@@ -96,9 +96,26 @@ def prepare(state, github, ref, stage, *, rerun_reason=None, allow_closed=False,
         snapshot["incomplete_reasons"] = sorted(set(reasons))
         bundle = {"schema_version": 1, "attempt_id": attempt["id"], "stage": stage,
                   "workflow_digest": workflow_digest(), "snapshot": snapshot}
+        input_text = serialize_json(bundle)
+        context = context_text(bundle)
+        input_bytes = len(input_text.encode("utf-8"))
+        context_bytes = len(context.encode("utf-8"))
+        # JSON escaping and numbered source lines expand independently. Admit
+        # exactly what readers will receive, before persisting either artifact.
+        if max(input_bytes, context_bytes) > MAX_ARTIFACT_BYTES:
+            diagnostic = {"schema_version": 1, "attempt_id": attempt["id"],
+                          "ref": attempt["ref"], "stage": stage,
+                          "head_sha": snapshot["head_sha"], "base_sha": snapshot["base_sha"],
+                          "merge_base_sha": snapshot.get("merge_base_sha"),
+                          "status": "incomplete", "error": "artifact_budget",
+                          "input_bytes": input_bytes, "context_bytes": context_bytes,
+                          "limit_bytes": MAX_ARTIFACT_BYTES}
+            return state.finish(attempt["id"], "incomplete",
+                                error=";".join(sorted(set([*reasons, "artifact_budget"]))),
+                                write=lambda: write_json(directory / "artifact-budget.json", diagnostic))
         fingerprint = digest(bundle)
-        write_json(directory / "input.json", bundle)
-        write_text(directory / "context.md", context_text(bundle))
+        write_text(directory / "input.json", input_text)
+        write_text(directory / "context.md", context)
         key = digest({"repo": snapshot["repo"].casefold(), "number": snapshot["number"],
                       "head_sha": snapshot["head_sha"], "base_sha": snapshot["base_sha"],
                       "policy": snapshot.get("policy", {}), "docs": snapshot.get("docs", {}),

@@ -181,3 +181,35 @@ def test_left_rename_evidence_has_original_commit_path(tmp_path):
     finding = read_json(state.root / "attempts" / attempt["id"] / "result.json")["result"]["findings"][0]
     assert finding["commit_sha"] == "d" * 40
     assert finding["commit_path"] == "original.py"
+
+
+def test_rendered_context_alone_over_budget_never_prepares(tmp_path):
+    import json
+    from pr_review_lib.workflow import context_text, workflow_digest
+
+    state, github = State(tmp_path / "state"), FakeGitHub()
+    # Within the collector's source byte ceiling; line-number rendering expands.
+    github.snapshot["sources"] = [{"path": "sample.py", "ref": "a" * 40,
+                                   "side": "RIGHT", "text": "\n" * 400_000}]
+    attempt = prepare(state, github, "owner/repo#1", "review")
+    bundle = {"schema_version": 1, "attempt_id": attempt["id"], "stage": "review",
+              "workflow_digest": workflow_digest(), "snapshot": github.snapshot}
+    input_bytes = len((json.dumps(bundle, indent=2, sort_keys=True, ensure_ascii=True) + "\n").encode("utf-8"))
+    context_bytes = len(context_text(bundle).encode("utf-8"))
+    assert input_bytes < 4_000_000 < context_bytes
+    assert attempt["status"] == "incomplete" and attempt["error"] == "artifact_budget"
+    directory = state.root / "attempts" / attempt["id"]
+    diagnostic = read_json(directory / "artifact-budget.json")
+    assert diagnostic["input_bytes"] == input_bytes
+    assert diagnostic["context_bytes"] == context_bytes
+    assert diagnostic["limit_bytes"] == 4_000_000
+    assert {p.name for p in directory.iterdir()} == {"artifact-budget.json"}
+    assert state.get(attempt["id"]) == attempt
+    with pytest.raises(StateError, match="only active prepared"):
+        finish(state, github, attempt, tmp_path)
+    from pr_review_lib.judgment import judge_attempt
+    def forbidden_resolver(*args, **kwargs):
+        pytest.fail("oversized context reached model resolver")
+    with pytest.raises(StateError, match="only a prepared"):
+        judge_attempt(state, github, attempt["id"], provider="openai-codex",
+                      model="offline-fixture", resolver=forbidden_resolver)

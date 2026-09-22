@@ -38,6 +38,7 @@ reviewer implementation, not a target PR.
 - [Rollout gates](SKILL_FIRST_ROLLOUT.md): scheduling, unattended ownership, and
   legacy retirement. A manual release does not pass these gates automatically.
 - [Source-enriched evidence](SKILL_FIRST_V02_VERIFICATION.md): current review proof.
+- [Collection compatibility](SKILL_FIRST_COLLECTION_COMPATIBILITY.md): literal Git paths, bounded document retries, and same-target verification.
 - [Legacy operations](OPERATIONS.md): existing plugin, receiver, and recovery.
 - [Release policy](RELEASING.md): public release conventions.
 

@@ -26,6 +26,29 @@ install, PR tests, external analyzer, approval, merge, or GitHub comment is allo
 The surrounding default agent is not sandboxed by this skill. Unattended use is
 out of scope until execution and credential restrictions are separately proven.
 
+## Collection limits
+
+`prepare --max-doc-bytes N` sets the aggregate decoded UTF-8 byte budget for
+trusted-base documents. Its default is 60000; the CLI accepts integers from 1
+through 1000000. This is an operator choice, not a field in PR-controlled text
+or repository policy. Required documents remain whole and hash-checked. Budget
+exhaustion still records `incomplete`; it never authorizes truncated coverage.
+Request, deadline, document-count, patch, and source limits remain unchanged.
+The reviewer must be able to read the complete resulting packet. More collection
+headroom does not increase a model context window or certify review completion.
+
+Before admission, `prepare` checks the exact serialized `input.json` and rendered
+`context.md` against the reader's 4000000-byte limit each. If either is oversized,
+it records `incomplete` with `artifact_budget` and writes only a private immutable
+`artifact-budget.json` containing commit identities, sizes, and the limit. No
+input/context packet is persisted for that attempt, and judgment is not admitted.
+Existing attempts remain unchanged. Nothing is silently truncated.
+
+Literal collected Git paths may contain brackets or asterisks. They remain exact
+keys and are percent-encoded for reads, never expanded as globs. Explicit
+`--source-path` and policy `extraDocPaths` retain their conservative restriction
+on glob-looking characters; only `ignorePatterns` uses glob matching.
+
 ## JSON shapes
 
 No extra fields are accepted. Common fields are `schema_version: 1`, the exact

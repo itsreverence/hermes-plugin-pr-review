@@ -7,6 +7,9 @@ import tempfile
 from pathlib import Path
 
 
+MAX_ARTIFACT_BYTES = 4_000_000
+
+
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
 
@@ -51,8 +54,13 @@ def private_file(path):
         os.close(fd)
 
 
+def serialize_json(value):
+    """Exact on-disk JSON representation, shared with admission checks."""
+    return json.dumps(value, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
+
+
 def write_json(path, value):
-    write_text(path, json.dumps(value, indent=2, sort_keys=True, ensure_ascii=True) + "\n")
+    write_text(path, serialize_json(value))
 
 
 def write_text(path, text):
@@ -87,10 +95,10 @@ def read_text(path):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     with os.fdopen(fd, encoding="utf-8") as handle:
         info = os.fstat(handle.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > 4_000_000:
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > MAX_ARTIFACT_BYTES:
             raise ValueError("invalid or oversized artifact")
-        text = handle.read(4_000_001)
-        if len(text) > 4_000_000:
+        text = handle.read(MAX_ARTIFACT_BYTES + 1)
+        if len(text) > MAX_ARTIFACT_BYTES:
             raise ValueError("oversized artifact")
         return text
 

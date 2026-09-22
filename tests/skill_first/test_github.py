@@ -504,6 +504,122 @@ def test_collection_metadata_race_cannot_reuse_completed_triage(tmp_path, field,
     assert state.get(first["id"])["status"] == "completed"
 
 
+@pytest.mark.parametrize("path", ["contributors/emails/[email protected]", "assets/literal*.txt"])
+def test_unrelated_literal_paths_in_all_pinned_trees_do_not_block_review(path):
+    fake = FakeGitHub()
+    fake.docs[path] = "Unrelated base blob"
+    for ref in (HEAD, MERGE_BASE):
+        fake.sources[(ref, path)] = "Unrelated source blob"
+    result = GitHub(transport=fake).collect(REF)
+    assert result["incomplete_reasons"] == []
+    assert set(result["docs"]) == {"README.md"}
+    assert {source["path"] for source in result["sources"]} == {"src/main.py"}
+    assert not any("/contents/contributors/" in argv[-1] or "/contents/assets/" in argv[-1]
+                   for argv, _ in fake.calls)
+
+
+@pytest.mark.parametrize("status", ["modified", "renamed", "copied"])
+@pytest.mark.parametrize("literal,encoded", [("[ab]", "%5Bab%5D"), ("a*b", "a%2Ab")])
+def test_changed_literal_paths_and_ancestor_docs_are_exact_not_globs(status, literal, encoded):
+    fake = FakeGitHub()
+    path = f"src/{literal}/main.py"
+    old = f"old/{literal}/main.py" if status != "modified" else path
+    fake.files = [file_entry(filename=path, status=status,
+                             **({"previous_filename": old} if old != path else {}))]
+    fake.sources[(HEAD, path)] = "before\nnew\n"
+    fake.sources[(MERGE_BASE, old)] = "before\nold\n"
+    matching_sibling = "a" if literal == "[ab]" else "ab"
+    fake.sources[(HEAD, f"src/{matching_sibling}/main.py")] = "Do not expand the literal path"
+    docs = {f"src/{literal}/AGENTS.md": "Head ancestor guidance",
+            f"{old.rsplit('/', 1)[0]}/README.md": "Origin ancestor guidance",
+            "docs/architecture [v1]*#?.md": "Architecture guidance"}
+    fake.docs.update(docs)
+    fake.docs[f"src/{matching_sibling}/AGENTS.md"] = "Unrelated sibling guidance"
+    result = GitHub(transport=fake).collect(REF)
+    assert result["incomplete_reasons"] == []
+    assert result["files"][0]["filename"] == path
+    assert result["files"][0]["patch"] == PATCH
+    if old != path:
+        assert result["files"][0]["previous_filename"] == old
+    assert result["sources"] == [
+        {"path": path, "ref": HEAD, "side": "RIGHT", "text": fake.sources[(HEAD, path)]},
+        {"path": old, "ref": MERGE_BASE, "side": "LEFT", "text": fake.sources[(MERGE_BASE, old)]},
+    ]
+    assert result["docs"] == {"README.md": fake.docs["README.md"], **docs}
+    old_dir = "old" if old != path else "src"
+    assert {argv[-1] for argv, _ in fake.calls if "/contents/" in argv[-1]} == {
+        f"repos/Org/repo/contents/README.md?ref={BASE}",
+        f"repos/Org/repo/contents/src/{encoded}/main.py?ref={HEAD}",
+        f"repos/Org/repo/contents/{old_dir}/{encoded}/main.py?ref={MERGE_BASE}",
+        f"repos/Org/repo/contents/src/{encoded}/AGENTS.md?ref={BASE}",
+        f"repos/Org/repo/contents/{old_dir}/{encoded}/README.md?ref={BASE}",
+        f"repos/Org/repo/contents/docs/architecture%20%5Bv1%5D%2A%23%3F.md?ref={BASE}",
+    }
+
+
+@pytest.mark.parametrize("failure,reason", [
+    ("duplicate", "invalid_tree"), ("truncated", "truncated_tree"),
+    ("symlink", "invalid_source"), ("submodule", "invalid_source"),
+    ("path", "invalid_source"), ("sha", "invalid_source"), ("content", "invalid_source"),
+])
+def test_literal_source_paths_retain_exact_evidence_gates(failure, reason):
+    fake = FakeGitHub()
+    path = "src/[ab]*.py"
+    fake.files = [file_entry(filename=path)]
+    text = "before\nnew\n"
+    for ref in (HEAD, MERGE_BASE):
+        fake.sources[(ref, path)] = text
+    entry = {"path": path, "type": "blob", "mode": "100644", "sha": blob_sha(text), "size": len(text)}
+    tree = {"sha": "e" * 40, "truncated": failure == "truncated", "tree": [entry]}
+    if failure == "duplicate":
+        tree["tree"].append(dict(entry))
+    elif failure == "symlink":
+        entry["mode"] = "120000"
+    elif failure == "submodule":
+        entry.update(mode="160000", type="commit")
+    endpoint = f"repos/Org/repo/contents/src/%5Bab%5D%2A.py?ref={HEAD}"
+    updates = {"path": {"path": "src/a.py"}, "sha": {"sha": "f" * 40},
+               "content": {"content": base64.b64encode(b"x" * len(text)).decode()}}
+    if failure in updates:
+        fake.overrides[endpoint] = content_response(path, text, **updates[failure])
+    fake.overrides[f"repos/Org/repo/git/trees/{HEAD}?recursive=1"] = response(tree)
+    result = GitHub(transport=fake).collect(REF)
+    assert reason in result["incomplete_reasons"]
+    if failure != "truncated":
+        assert not any(source["side"] == "RIGHT" for source in result["sources"])
+    if failure in {"duplicate", "symlink", "submodule"}:
+        assert endpoint not in [argv[-1] for argv, _ in fake.calls]
+    else:
+        assert endpoint in [argv[-1] for argv, _ in fake.calls]
+
+
+@pytest.mark.parametrize("stage", ["triage", "review"])
+@pytest.mark.parametrize("location", ["tree", "filename", "previous_filename"])
+@pytest.mark.parametrize("path", ["../bad", "/absolute", "a/../bad", "a/./bad", "a//bad",
+                                  "a/", "a\\b", "a%2fb", "a%252fb", "a\x00b", "a\nb",
+                                  "a\x1fb", "a\x7fb", "~user/bad", "-option", " bad", "bad "])
+def test_unsafe_repository_paths_still_fail_closed(stage, location, path):
+    fake = FakeGitHub()
+    if location == "tree":
+        fake.tree["tree"].append({"path": path, "type": "blob", "mode": "100644"})
+    else:
+        fake.files = [file_entry(**{location: path})]
+    result = GitHub(transport=fake).collect(REF, stage=stage)
+    assert ("invalid_tree" if location == "tree" else "invalid_file") in result["incomplete_reasons"]
+    assert all("/contents/" not in argv[-1] or argv[-1].split("/contents/", 1)[1].split("?ref=", 1)[0]
+               in {"README.md", "src/main.py"} for argv, _ in fake.calls)
+
+
+@pytest.mark.parametrize("path", ["docs/[ab].md", "docs/a*.md"])
+def test_explicit_document_selectors_remain_glob_disallowing(path):
+    fake = FakeGitHub()
+    fake.docs[".github/hermes-pr-reviewer.json"] = json.dumps({"extraDocPaths": [path]})
+    fake.docs[path] = "Not an automatic instruction document"
+    result = GitHub(transport=fake).collect(REF)
+    assert "invalid_config" in result["incomplete_reasons"]
+    assert path not in result["docs"]
+
+
 def test_full_sources_include_surrounding_methods_at_head_and_merge_base():
     fake = FakeGitHub()
     result = GitHub(transport=fake).collect(REF)
@@ -559,7 +675,7 @@ def test_explicit_source_paths_are_pinned_quoted_and_deduplicated():
 
 
 @pytest.mark.parametrize("paths", [None, "src/main.py", ["../bad"], ["/tmp/x"], ["a%2fb"],
-                                   ["a\\b"], ["a//b"], ["a\nb"], ["a*"], [1], ["x"] * 25])
+                                   ["a\\b"], ["a//b"], ["a\nb"], ["a*"], ["a[b]"], [1], ["x"] * 25])
 def test_invalid_explicit_source_paths_rejected_before_any_request(paths):
     fake = FakeGitHub()
     with pytest.raises(ValueError):
