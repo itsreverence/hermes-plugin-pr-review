@@ -169,9 +169,23 @@ def test_real_sdk_parser_judge_attempt_offline(tmp_path, monkeypatch, outcome):
     pytest.importorskip("agent.codex_runtime")
     httpx = pytest.importorskip("httpx")
     openai = pytest.importorskip("openai")
+    from pr_review_lib import judgment
     from pr_review_lib.judgment import judge_attempt
     from pr_review_lib.state import State
     from pr_review_lib.workflow import prepare
+
+    # Preserve the exact failure before judge_attempt sanitizes provider errors.
+    failures = []
+    real_judge = judgment.judge
+
+    def observed_judge(*args, **kwargs):
+        try:
+            return real_judge(*args, **kwargs)
+        except Exception as exc:
+            failures.append((type(exc).__name__, str(exc)))
+            raise
+
+    monkeypatch.setattr(judgment, "judge", observed_judge)
 
     class GitHub:
         def collect(self, *args, **kwargs):
@@ -211,6 +225,8 @@ def test_real_sdk_parser_judge_attempt_offline(tmp_path, monkeypatch, outcome):
 
     def resolve(provider, *, model, raw_codex):
         assert raw_codex is True
+        if outcome == "valid":
+            time.sleep(1.1)  # Model bounded cold SDK/auth startup, without network.
         if outcome == "timeout":
             time.sleep(0.3)  # Must share the stream's wall budget, not reset it.
         return client, "other" if outcome == "mismatch" else model
@@ -220,19 +236,22 @@ def test_real_sdk_parser_judge_attempt_offline(tmp_path, monkeypatch, outcome):
     attempt = prepare(state, github, "owner/repo#1", "review")
     started = time.monotonic()
     try:
+        # Only the timeout fixture tests a one-second deadline. Other outcomes
+        # need headroom for cold SDK lazy Responses setup on slower CI runners.
         result = judge_attempt(state, github, attempt["id"], provider="openai-codex",
-                               model="fixture-model", timeout=1)
+                               model="fixture-model", timeout=1 if outcome == "timeout" else 5)
         elapsed = time.monotonic() - started
+        assert result["status"] == State(state.root).get(attempt["id"])["status"] == (
+            "completed" if outcome == "valid" else "failed"), (outcome, result, failures)
         assert client.is_closed()
         assert outcome == "mismatch" or closed
-        assert result["status"] == State(state.root).get(attempt["id"])["status"] == (
-            "completed" if outcome == "valid" else "failed")
         directory = state.root / "attempts" / attempt["id"]
         assert (directory / "inference.json").exists() == (outcome == "valid")
         assert (directory / "model-output.json").exists() == (outcome in {"valid", "invalid"})
         if outcome != "valid":
             assert result["error"] == ("judgment_rejected" if outcome == "invalid" else "model_unavailable")
         if outcome == "timeout":
+            assert failures == [("TimeoutError", "judgment time budget exhausted")]
             assert 0.9 < elapsed < 1.2, "resolver and stream must share one wall deadline"
         assert all("private-provider-detail" not in p.read_text() for p in directory.iterdir() if p.is_file())
     finally:

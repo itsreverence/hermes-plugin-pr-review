@@ -121,6 +121,16 @@ transport tests. CI declares those dependencies so a green job cannot silently
 skip the real-SDK offline seam. Mock HTTP transport tests make no model, socket,
 or credential calls. Hosted CI and installed-copy evidence are separate gates.
 
+The first hosted run passed on Python 3.12 but failed the valid SDK fixture on
+3.11. Every fixture had a one-second allowance, including cold SDK setup. A
+controlled 1.1-second resolver delay reproduced the failure with an exact
+`TimeoutError`; the same fixture passed with five-second success-case headroom.
+This supports, but does not independently prove, the hosted cold-start diagnosis.
+The dedicated timeout case still has exactly one second and retains its strict
+shared-budget elapsed-time assertion. Production timeout code is unchanged.
+Both local Python matrices passed **474 tests and 82 subtests** after this
+test-only repair.
+
 ## Shadow discovery
 
 Two real shadow scans of the explicitly enrolled repository completed in fresh
