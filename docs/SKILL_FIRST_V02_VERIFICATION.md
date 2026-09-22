@@ -131,6 +131,37 @@ shared-budget elapsed-time assertion. Production timeout code is unchanged.
 Both local Python matrices passed **474 tests and 82 subtests** after this
 test-only repair.
 
+## Initial pinned installation
+
+After both hosted CI jobs passed on commit
+`fd7f17cb8af6d996e99d7f70a3929b98360af682`, the supported URL installer passed
+its normal security scan in a temporary home and then the default profile.
+Read-back matched all 13 installed files against the commit. The installed skill
+loaded successfully and, from outside the checkout, completed a real supervised
+review of the quiet control. Repeating prepare skipped to that completed attempt.
+An owner-private receipt and exact-byte rollback copy preserve this checkpoint.
+
+The installed shadow canary then exposed an API compatibility gap absent from
+the earlier empty-repository scans. With one draft PR present, GitHub's empty
+sentinel page advertised `prev`, `last`, and `first` links using its canonical
+numeric `/repositories/1297652465/pulls` URL. The collector had accepted only the
+owner/name path, so it rejected this legitimate header. The scan failed closed,
+emitted `wakeAgent:false`, and preserved prior queue state. No model ran.
+This is a shadow-scanner defect, not a failure of the completed manual review.
+
+A regression reproduced the header rejection. The repair resolves the repository
+ID from authenticated metadata and permits only that repository's named or numeric
+pull paths. Header URLs are never followed. Wrong IDs, foreign paths/origins,
+invalid metadata, incomplete pagination, and budget exhaustion still fail closed.
+Case-variant names retain GitHub identity semantics without rewriting caller
+routes. The identity lookup consumes the shared request and time budgets.
+
+After repair, the parent reran the full suite on Python 3.11 and 3.12: **527 passed
+and 82 subtests passed** on each, with Ruff and whitespace checks passing. Two
+real source-checkout scans subsequently succeeded, excluded the draft PR, and
+returned no candidates or agent wake. These source runs do not substitute for
+the final pinned installed-copy verification.
+
 ## Shadow discovery
 
 Two real shadow scans of the explicitly enrolled repository completed in fresh

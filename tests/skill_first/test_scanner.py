@@ -22,17 +22,28 @@ def pr(number=1, **updates):
     return item
 
 
-def api(pages, **kwargs):
+def api(pages, *, headers=None, repositories=None, **kwargs):
     calls = []
+    responses = iter(enumerate(pages))
+    if repositories is None:
+        repositories = {repo: {"full_name": repo, "id": number} for number, repo in enumerate(
+            ("owner/repo", "different/repo", "another/repo"), 1)}
+
     def transport(argv, **options):
-        calls.append(argv[-1])
+        endpoint = argv[-1]
+        calls.append(endpoint)
         assert argv[:6] == ["gh", "api", "--hostname", "github.com", "--method", "GET"]
         assert options["timeout"] > 0 and options["stdin"] == subprocess.DEVNULL
-        value = pages[len(calls) - 1]
+        header = ""
+        if endpoint in {f"repos/{repo}" for repo in repositories}:
+            value = repositories[endpoint.removeprefix("repos/")]
+        else:
+            index, value = next(responses)
+            header = headers[index] if headers else ""
         if isinstance(value, Exception):
             raise value
         body = value if isinstance(value, str) else json.dumps(value)
-        return subprocess.CompletedProcess(argv, 0, "HTTP/2.0 200 OK\n\n" + body, "")
+        return subprocess.CompletedProcess(argv, 0, "HTTP/2.0 200 OK\n" + header + "\n" + body, "")
     return ScanGitHub(transport=transport, **kwargs), calls
 
 
@@ -58,14 +69,129 @@ def test_repos_file(tmp_path):
         load_repos(path)
 
 
+def test_canonical_numeric_sentinel_links_for_draft_only_listing(tmp_path):
+    repo = "itsreverence/hermes-plugin-pr-review"
+    repository_id = 1297652465
+    query = "state=open&sort=created&direction=asc&per_page=100&page="
+    calls = []
+
+    def transport(argv, **kwargs):
+        assert argv[:6] == ["gh", "api", "--hostname", "github.com", "--method", "GET"]
+        endpoint = argv[-1]
+        calls.append(endpoint)
+        headers = ""
+        if endpoint == f"repos/{repo}":
+            body = {"full_name": repo, "id": repository_id}
+        elif endpoint == f"repos/{repo}/pulls?{query}1":
+            body = [pr(11, draft=True, html_url=f"https://github.com/{repo}/pull/11",
+                       base={"sha": "b" * 40, "repo": {"full_name": repo}})]
+        else:
+            assert endpoint == f"repos/{repo}/pulls?{query}2"
+            body = []
+            target = f"https://api.github.com/repositories/{repository_id}/pulls?{query}1"
+            headers = "Link: " + ", ".join(f'<{target}>; rel="{rel}"' for rel in ("prev", "last", "first")) + "\n"
+        return subprocess.CompletedProcess(argv, 0, "HTTP/2.0 200 OK\n" + headers + "\n" + json.dumps(body), "")
+
+    result = Scanner(tmp_path / "private").scan([repo], ScanGitHub(transport=transport))
+    assert result["wakeAgent"] is False and result["candidates"] == []
+    assert result["applied_scan"] == 1 and result["repos"] == [repo]
+    assert calls == [f"repos/{repo}", *(f"repos/{repo}/pulls?{query}{page}" for page in (1, 2))]
+
+
+@pytest.mark.parametrize("repo,name", [("OWNER/REPO", "owner/repo"), ("owner/repo", "OWNER/REPO")])
+def test_repository_identity_preserves_case_insensitive_github_names(repo, name):
+    github, calls = api([[pr()], []], repositories={repo: {"full_name": name, "id": 1}})
+    assert github.enumerate([repo])[0]["ref"] == repo + "#1"
+    assert calls[0] == "repos/" + repo
+    assert all(call.startswith("repos/" + repo) for call in calls)
+
+
+@pytest.mark.parametrize("metadata", [None, [], {}, {"full_name": "owner/repo"},
+                                      {"full_name": "other/repo", "id": 1},
+                                      {"full_name": "owner/repo ", "id": 1},
+                                      {"full_name": None, "id": 1},
+                                      *({"full_name": "owner/repo", "id": value}
+                                        for value in (None, True, 0, -1, 1.0, "1"))])
+def test_invalid_repository_identity_fails_before_listing(tmp_path, metadata):
+    queue = Scanner(tmp_path / "private")
+    before = scan(queue, [pr()])
+    github, calls = api([[]], repositories={"owner/repo": metadata})
+    with pytest.raises(GitHubError, match="repository identity"):
+        queue.scan(["owner/repo"], github)
+    assert calls == ["repos/owner/repo"]
+    assert queue.status() == before
+
+
+@pytest.mark.parametrize("rel", ["next", "prev", "first", "last"])
+@pytest.mark.parametrize("target", [
+    "https://api.github.com/repositories/2/pulls?page=2",
+    "https://api.github.com/repos/foreign/repo/pulls?page=2",
+    "http://api.github.com/repositories/1/pulls?page=2",
+    "https://foreign.example/repositories/1/pulls?page=2",
+    "https://api.github.com@foreign.example/repositories/1/pulls?page=2",
+    "https://api.github.com:443/repositories/1/pulls?page=2",
+    "https://api.github.com/repositories/01/pulls?page=2",
+    "https://api.github.com/repositories/1/issues?page=2",
+])
+def test_untrusted_pagination_target_never_followed_or_applied(tmp_path, rel, target):
+    queue = Scanner(tmp_path / "private")
+    before = scan(queue, [pr()])
+    github, calls = api([[pr(2)], []], headers=[f'Link: <{target}>; rel="{rel}"\n', ""])
+    with pytest.raises(GitHubError, match="invalid pagination target"):
+        queue.scan(["owner/repo"], github)
+    assert calls == ["repos/owner/repo",
+                     "repos/owner/repo/pulls?state=open&sort=created&direction=asc&per_page=100&page=1"]
+    assert queue.status() == before
+
+
+def test_numeric_next_last_still_fetches_owner_routes_and_empty_sentinel():
+    numeric = "https://api.github.com/repositories/1/pulls?page="
+    owner = "https://api.github.com/repos/owner/repo/pulls?page="
+    headers = [f'Link: <{numeric}2>; rel="next", <{owner}2>; rel="last"\n',
+               f'Link: <{owner}1>; rel="prev", <{numeric}1>; rel="first"\n',
+               f'Link: <{numeric}2>; rel="prev", <{numeric}2>; rel="last", <{numeric}1>; rel="first"\n']
+    github, calls = api([[pr()], [pr(2)], []], headers=headers, max_requests=4, max_pages=3)
+    assert [item["number"] for item in github.enumerate(["owner/repo"])] == [1, 2]
+    assert calls == ["repos/owner/repo", *(f"repos/owner/repo/pulls?state=open&sort=created&direction=asc&per_page=100&page={page}"
+                                         for page in (1, 2, 3))]
+
+
+@pytest.mark.parametrize("header", [
+    'Link: <https://api.github.com/repositories/1/pulls?page=3>; rel="next"\n',
+    'Link: <https://api.github.com/repositories/1/pulls?page=3>; rel="last"\n',
+])
+def test_numeric_links_do_not_weaken_advertised_page_exhaustion(tmp_path, header):
+    queue = Scanner(tmp_path / "private")
+    before = scan(queue, [pr()])
+    github, _ = api([[pr(2)], []], headers=[header, ""])
+    with pytest.raises(GitHubError, match="inconsistent next page|ended before advertised pages"):
+        queue.scan(["owner/repo"], github)
+    assert queue.status() == before
+
+
+@pytest.mark.parametrize("second_id", [1, 3])
+def test_numeric_identity_is_scoped_to_current_enrolled_repository(tmp_path, second_id):
+    queue = Scanner(tmp_path / "private")
+    before = scan(queue, [pr()])
+    github, calls = api([[], []], headers=["", f'Link: <https://api.github.com/repositories/{second_id}/pulls?page=1>; rel="first"\n'],
+                        max_pages=1, max_requests=4)
+    if second_id == 1:
+        with pytest.raises(GitHubError, match="invalid pagination target"):
+            queue.scan(["owner/repo", "another/repo"], github)
+        assert queue.status() == before
+    else:
+        assert queue.scan(["owner/repo", "another/repo"], github)["candidates"] == []
+    assert len(calls) == 4 and calls[0] == "repos/owner/repo" and calls[2] == "repos/another/repo"
+
+
 def test_full_pagination_short_page_not_terminal_and_drafts(tmp_path):
     queue = Scanner(tmp_path / "private")
     github, calls = api([[pr(i) for i in range(1, 101)], [pr(101), pr(102, draft=True)], [pr(103)], []])
     result = queue.scan(["owner/repo"], github)
     assert result["wakeAgent"] is True
     assert len(result["candidates"]) == 102
-    assert len(calls) == 4
-    assert all(f"per_page=100&page={i}" in call for i, call in enumerate(calls, 1))
+    assert len(calls) == 5 and calls[0] == "repos/owner/repo"
+    assert all(f"per_page=100&page={i}" in call for i, call in enumerate(calls[1:], 1))
     assert result["atomic"] is False
 
 
@@ -89,7 +215,7 @@ def test_partial_duplicate_and_page_budget_are_fail_closed(tmp_path):
     for pages, options in [([[pr(2)], OSError("offline")], {}),
                            ([[pr(2)], [pr(2)]], {}),
                            ([[pr(2)]], {"max_pages": 1}),
-                           ([[pr(2)]], {"max_requests": 1})]:
+                           ([[pr(2)]], {"max_requests": 2})]:
         github, _ = api(pages, **options)
         with pytest.raises(GitHubError):
             queue.scan(["owner/repo"], github)
@@ -223,6 +349,8 @@ def test_workflow_revision_requeues_done_and_fences_old_claim(tmp_path):
                                               ("", 206)])
 def test_explicit_partial_http_or_empty_page_with_more_is_rejected(tmp_path, headers, status):
     def transport(argv, **kwargs):
+        if argv[-1] == "repos/owner/repo":
+            return subprocess.CompletedProcess(argv, 0, 'HTTP/2.0 200 OK\n\n{"full_name":"owner/repo","id":1}', "")
         return subprocess.CompletedProcess(argv, 0, f"HTTP/2.0 {status} OK\n{headers}\n[]", "")
     with pytest.raises(GitHubError):
         Scanner(tmp_path / "private").scan(["owner/repo"], ScanGitHub(transport=transport))
@@ -269,22 +397,17 @@ def test_slow_scan_cannot_replace_newer_successful_scan(tmp_path):
 
 
 def test_link_pagination_and_global_multi_repo_budget(tmp_path):
-    calls = []
-    def transport(argv, **kwargs):
-        calls.append(argv[-1])
-        page = len(calls)
-        links = ('Link: <https://api.github.com/repos/owner/repo/pulls?page=2>; rel="next", '
-                 '<https://api.github.com/repos/owner/repo/pulls?page=2>; rel="last"\n') if page == 1 else ""
-        items = [pr(page)] if page < 3 else []
-        return subprocess.CompletedProcess(argv, 0, "HTTP/2.0 200 OK\n" + links + "\n" + json.dumps(items), "")
-    github = ScanGitHub(transport=transport)
+    links = ('Link: <https://api.github.com/repos/owner/repo/pulls?page=2>; rel="next", '
+             '<https://api.github.com/repos/owner/repo/pulls?page=2>; rel="last"\n')
+    github, _ = api([[pr(1)], [pr(2)], []], headers=[links, "", ""])
     queue = Scanner(tmp_path / "private")
     assert len(queue.scan(["owner/repo"], github)["candidates"]) == 2
-    github, calls = api([[]], max_requests=1)
+    github, calls = api([[]], max_requests=3)
     with pytest.raises(GitHubError, match="request budget"):
         queue.scan(["owner/repo", "another/repo"], github)
     assert len(queue.status()["candidates"]) == 2
-    assert len(calls) == 1
+    assert calls == ["repos/owner/repo", "repos/owner/repo/pulls?state=open&sort=created&direction=asc&per_page=100&page=1",
+                     "repos/another/repo"]
 
 
 def test_rate_limit_retry_shares_request_budget(tmp_path):

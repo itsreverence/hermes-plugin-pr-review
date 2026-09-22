@@ -74,7 +74,11 @@ in-tree adapter against Hermes upgrades rather than assuming SDK stability.
 `pr_scan.py --state-root PRIVATE_STATE scan --repos-file REPOS_JSON` performs
 shadow discovery. The file must contain a nonempty explicit JSON list of
 `owner/repo` names. No repository discovery or enrollment defaults apply. The
-scanner paginates open PRs, excludes drafts, and stores pending versions in a
+scanner first resolves each allowlisted repository's authenticated numeric ID,
+then validates pagination links against either its named path or that exact
+numeric path. Same-name capitalization follows GitHub semantics; supplied routes
+are preserved. The identity read and all retries share the request/time budget.
+The scanner paginates open PRs, excludes drafts, and stores pending versions in a
 separate private `scanner.sqlite3`. `status` reads routing state.
 
 Repeated scans preserve pending, backoff, held, and completed versions. Queue

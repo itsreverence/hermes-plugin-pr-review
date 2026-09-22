@@ -102,7 +102,10 @@ class ScanGitHub(GitHub):
     Fetch an empty sentinel page even after a short page: do not mistake a
     partial nonempty response for an exhausted listing. Duplicate identities,
     corrupt items and any exhausted budget fail the ENTIRE scan. max_pages is
-    per repository, including the sentinel; max_requests includes retries.
+    per repository, including the sentinel but excluding the one repository
+    identity lookup. max_requests and the deadline include those lookups and
+    all retries. Only the verified repository's named/numeric pull paths are
+    accepted in Link headers; requests always use caller-constructed routes.
     No metadata-per-PR requests, anonymous transport, search, or repo discovery.
     """
 
@@ -112,7 +115,7 @@ class ScanGitHub(GitHub):
             raise ValueError("max_pages must be a positive integer")
         self.max_pages = max_pages
 
-    def _request(self, endpoint, *, optional=False):
+    def _request(self, endpoint, *, optional=False, repository_id=None):
         # The shared client owns auth/retry/deadline/JSON parsing. Capture only
         # its final response headers, which it otherwise does not expose.
         original = self.transport
@@ -138,6 +141,9 @@ class ScanGitHub(GitHub):
         self._page_links = {}
         if len(links) > 1:
             raise GitHubError("GitHub returned ambiguous pagination headers")
+        paths = {("/" + endpoint.split("?")[0]).casefold()}
+        if repository_id is not None:
+            paths.add(f"/repositories/{repository_id}/pulls")
         for part in links[0].split(",") if links else []:
             match = re.fullmatch(r'\s*<([^<>]+)>;\s*rel="(next|prev|first|last)"\s*', part)
             if not match:
@@ -146,7 +152,7 @@ class ScanGitHub(GitHub):
                 url = urlsplit(match[1])
                 pages = parse_qs(url.query).get("page", [])
                 if (url.scheme != "https" or url.netloc != "api.github.com" or
-                        url.path.casefold() != ("/" + endpoint.split("?")[0]).casefold() or
+                        url.path.casefold() not in paths or
                         url.fragment or len(pages) != 1 or
                         not re.fullmatch(r"[1-9][0-9]{0,8}", pages[0]) or match[2] in self._page_links):
                     raise ValueError
@@ -160,10 +166,18 @@ class ScanGitHub(GitHub):
         self._begin()
         candidates = []
         for repo in repos:
+            # Resolve the canonical numeric path from authenticated metadata,
+            # never from a Link header (including on an empty/draft-only repo).
+            repository = self._request(f"repos/{repo}")
+            if (not isinstance(repository, dict) or not isinstance(repository.get("full_name"), str) or
+                    repository["full_name"].casefold() != repo.casefold() or
+                    type(repository.get("id")) is not int or repository["id"] <= 0):
+                raise GitHubError("GitHub returned invalid repository identity")
             seen = set()
             required_through = 0
             for page in range(1, self.max_pages + 1):
-                items = self._request(f"repos/{repo}/pulls?state=open&sort=created&direction=asc&per_page=100&page={page}")
+                items = self._request(f"repos/{repo}/pulls?state=open&sort=created&direction=asc&per_page=100&page={page}",
+                                      repository_id=repository["id"])
                 if not isinstance(items, list) or len(items) > 100:
                     raise GitHubError("GitHub returned invalid pull listing")
                 next_page = self._page_links.get("next")

@@ -6,7 +6,7 @@ From this trusted checkout, point `HERMES_AGENT_SRC` at a compatible Hermes
 source tree. Use fresh private HERMES_HOME for tests that load the plugin.
 
 ```bash
-HERMES_HOME=$(mktemp -d) PYTHONPATH="$PWD:$HERMES_AGENT_SRC" uv run --no-project --python 3.11 --with pytest --with pyyaml python -m pytest tests/plugins tests/skill_first -q -p no:cacheprovider
+HERMES_HOME=$(mktemp -d) PYTHONPATH="$PWD:$HERMES_AGENT_SRC" uv run --no-project --python 3.11 --with pytest --with pyyaml --with openai==3.17.0 --with httpx==0.28.1 python -m pytest tests/plugins tests/skill_first -q -p no:cacheprovider
 uv run --no-project --python 3.11 --with 'ruff==0.15.10' ruff check --isolated --no-cache plugins tests scripts skills
 git diff --check
 ```
