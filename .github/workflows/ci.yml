@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install test dependencies
-        run: python -m pip install --upgrade pytest pyyaml ruff==0.15.10
+        run: python -m pip install --upgrade pytest pyyaml ruff==0.15.10 openai==3.17.0 httpx==0.28.1
       - name: Fetch pinned Hermes Agent plugin APIs
         run: |
           git init /tmp/hermes-agent

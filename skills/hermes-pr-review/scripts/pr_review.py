@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Manual-only entrypoint. No model, scheduler, plugin, or publishing client."""
+"""Local skill-first entrypoint. Optional tool-less judgment, no publishing."""
 import argparse
 import json
 import sys
@@ -19,10 +19,17 @@ def main(argv=None):
     collect.add_argument("--rerun-reason", help="intentional rerun; cannot steal an active claim")
     collect.add_argument("--allow-closed", action="store_true", help="explicit retrospective review")
     collect.add_argument("--allow-draft", action="store_true")
+    collect.add_argument("--source-path", action="append", default=[], help="explicit repository-relative source dependency, fetched at pinned head and merge base; repeatable")
     finish = commands.add_parser("finalize", help="validate an agent result and recheck the PR snapshot")
     finish.add_argument("attempt")
     finish.add_argument("--result", required=True, type=Path)
     finish.add_argument("--model", required=True, help="operator-reported actual reviewing model, not inferred")
+    judge = commands.add_parser("judge", help="experimental supervised tool-less judgment; no unattended worker")
+    judge.add_argument("attempt")
+    judge.add_argument("--provider", required=True, choices=["openai-codex"])
+    judge.add_argument("--model", required=True)
+    judge.add_argument("--reasoning", choices=["low", "medium", "high"], default="high")
+    judge.add_argument("--timeout", type=int, default=180)
     status = commands.add_parser("status", help="inspect recent attempts or one exact attempt")
     status.add_argument("--attempt")
     fail = commands.add_parser("fail", help="record a review that could not finish")
@@ -39,7 +46,10 @@ def main(argv=None):
             from pr_review_lib.github import GitHub, parse_ref
             github = GitHub()
             if args.command == "prepare":
-                result = prepare(state, github, parse_ref(args.pr), args.stage, rerun_reason=args.rerun_reason, allow_closed=args.allow_closed, allow_draft=args.allow_draft)
+                result = prepare(state, github, parse_ref(args.pr), args.stage, rerun_reason=args.rerun_reason, allow_closed=args.allow_closed, allow_draft=args.allow_draft, source_paths=tuple(args.source_path))
+            elif args.command == "judge":
+                from pr_review_lib.judgment import judge_attempt
+                result = judge_attempt(state, github, args.attempt, provider=args.provider, model=args.model, reasoning=args.reasoning, timeout=args.timeout)
             else:
                 result = finalize(state, github, args.attempt, args.result, model=args.model)
         if "id" in result:

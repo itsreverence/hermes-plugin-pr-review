@@ -39,6 +39,14 @@ orchestration, and thin dependency-injecting adapters for extracted subsystems.
 owns review judgment and its standalone Python helpers own GitHub reads, SQLite
 claims, deduplication, artifact writes, and result validation. It has no plugin
 or receiver dependency and no scheduler or GitHub mutation implementation.
+Review evidence includes full bounded files at head and merge base, plus selected
+base guidance. Explicit extra source paths expand evidence without executing code.
+
+Two opt-in experimental helpers share this bundle: a tool-less provider judgment
+path and a deterministic allowlisted shadow scanner. Neither starts a scheduler.
+The scanner owns a separate queue; its routing state is not a completed review.
+An unattended worker must bind results back to the shared attempt ledger before
+activation can be considered.
 See [candidate design and scope](SKILL_FIRST.md). The legacy path below remains
 intact until a separately approved cutover.
 

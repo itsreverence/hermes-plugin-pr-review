@@ -14,7 +14,9 @@ Hermes PR Review uses your configured Hermes model and authentication, gathers p
 A manual-only replacement candidate lives in [`skills/hermes-pr-review`](skills/hermes-pr-review/SKILL.md).
 It uses a shared skill plus small Python helpers for pinned GitHub reads, SQLite
 claims/deduplication, and local reports. It does not install a plugin, execute PR
-code, post to GitHub, or schedule scans. See [candidate operation and scope](docs/SKILL_FIRST.md).
+code, post to GitHub, or schedule scans. See [candidate operation and scope](docs/SKILL_FIRST.md),
+[verification evidence](docs/SKILL_FIRST_VERIFICATION.md), and
+[pinned manual installation](docs/SKILL_FIRST_INSTALL.md).
 The plugin instructions below remain unchanged; this candidate is not a live cutover.
 
 ## Requirements

@@ -1,5 +1,8 @@
 # Manual candidate verification
 
+This is the initial candidate record. See [source-enriched verification](SKILL_FIRST_V02_VERIFICATION.md)
+for the later collector, real positive findings, transport audit, and rollout evidence.
+
 This note records bounded checks of the manual candidate, not deployment or
 release readiness. Raw packets and judgments remain in private local state.
 

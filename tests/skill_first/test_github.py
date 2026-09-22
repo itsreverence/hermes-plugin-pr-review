@@ -1,5 +1,6 @@
 """Network-free contract checks for the standalone, read-only collector."""
 import base64
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -47,6 +48,19 @@ def response(body=None, status=200, headers=None, stderr=""):
                                        "\r\n".join(lines) + "\r\n\r\n" + json.dumps(body), stderr)
 
 
+def blob_sha(text):
+    raw = text.encode() if isinstance(text, str) else text
+    return hashlib.sha1(f"blob {len(raw)}\0".encode() + raw).hexdigest()
+
+
+def content_response(requested_path, text, **updates):
+    raw = text.encode() if isinstance(text, str) else text
+    data = {"type": "file", "path": requested_path, "sha": blob_sha(raw), "encoding": "base64",
+            "size": len(raw), "content": base64.b64encode(raw).decode()}
+    data.update(updates)
+    return response(data)
+
+
 class FakeGitHub:
     def __init__(self):
         self.calls = []
@@ -55,6 +69,9 @@ class FakeGitHub:
         self.files = [file_entry()]
         self.tree = {"truncated": False, "tree": []}
         self.docs = {"README.md": "Trusted base documentation"}
+        self.sources = {(HEAD, "src/main.py"): "before\nnew\n\ndef surrounding_method():\n    return 42\n",
+                        (MERGE_BASE, "src/main.py"): "before\nold\n\ndef surrounding_method():\n    return 41\n",
+                        (MERGE_BASE, "src/old.py"): "before\nold\n"}
         self.overrides = {}
         self.meta_calls = 0
 
@@ -74,20 +91,31 @@ class FakeGitHub:
         if endpoint == f"repos/Org/repo/compare/{BASE}...{HEAD}?per_page=100&page=1":
             return response({"files": self.files, "base_commit": {"sha": BASE},
                              "merge_base_commit": {"sha": MERGE_BASE}})
-        if endpoint == f"repos/Org/repo/git/trees/{BASE}?recursive=1":
-            return response(self.tree)
+        tree_prefix = "repos/Org/repo/git/trees/"
+        if endpoint.startswith(tree_prefix):
+            ref = endpoint[len(tree_prefix):].removesuffix("?recursive=1")
+            assert ref in {BASE, HEAD, MERGE_BASE}
+            texts = self.docs if ref == BASE else {p: t for (r, p), t in self.sources.items() if r == ref}
+            entries = {p: {"path": p, "type": "blob", "mode": "100644", "sha": blob_sha(t),
+                           "size": len(t.encode() if isinstance(t, str) else t)} for p, t in texts.items()}
+            tree = self.tree if ref == BASE else {"truncated": False, "tree": []}
+            if not isinstance(tree.get("tree"), list):
+                return response(tree)
+            for entry in tree["tree"]:
+                value = dict(entries.get(entry.get("path"), {}))
+                value.update(entry)
+                entries[entry.get("path")] = value
+            return response({**tree, "sha": "e" * 40, "tree": list(entries.values())})
         prefix = "repos/Org/repo/contents/"
         if endpoint.startswith(prefix):
             from urllib.parse import unquote
             path, ref = endpoint[len(prefix):].split("?ref=")
-            assert ref == BASE
+            assert ref in {BASE, HEAD, MERGE_BASE}
             path = unquote(path)
-            if path not in self.docs:
+            texts = self.docs if ref == BASE else {p: t for (r, p), t in self.sources.items() if r == ref}
+            if path not in texts:
                 return response({"message": "Not Found"}, 404)
-            text = self.docs[path]
-            return response({"type": "file", "path": path, "encoding": "base64",
-                             "size": len(text.encode()),
-                             "content": base64.b64encode(text.encode()).decode()})
+            return content_response(path, texts[path])
         raise AssertionError("Unexpected endpoint: " + endpoint)
 
 
@@ -164,7 +192,7 @@ class CollectionTests(unittest.TestCase):
             self.fake.docs[name] = "trusted text"
         result = self.collect()
         self.assertIn(path, result["docs"])
-        self.assertIn(".github/workflows/test.yml", result["docs"])
+        self.assertNotIn(".github/workflows/test.yml", result["docs"])
         self.assertEqual(result["policy"]["ignorePatterns"], ["**/vendor/**"])
         self.assertTrue(any("design%20notes%231%3F.md?ref=" in args[-1] for args, _ in self.fake.calls))
 
@@ -207,6 +235,7 @@ class CollectionTests(unittest.TestCase):
                 self.assertIn("invalid_config", self.collect()["incomplete_reasons"])
 
     def test_optional_not_found_is_not_denied(self):
+        self.fake.docs["AGENTS.md"] = "Root guidance"
         endpoint = f"repos/Org/repo/contents/AGENTS.md?ref={BASE}"
         self.fake.overrides[endpoint] = response({"message": "secret"}, 403, stderr="secret")
         with self.assertRaises(GitHubError) as raised:
@@ -224,7 +253,7 @@ class CollectionTests(unittest.TestCase):
 
     def test_document_count_budget_and_trusted_sha(self):
         for index in range(40):
-            name = f"docs/{index}/ARCHITECTURE.md"
+            name = f"docs/architecture-{index}.md"
             self.fake.tree["tree"].append({"path": name, "type": "blob", "mode": "100644"})
             self.fake.docs[name] = "Architecture"
         result = self.collect()
@@ -406,6 +435,7 @@ def test_collected_patch_citations_use_physical_lf_lines(tmp_path, separator, tr
     patch_text = f"@@ -0,0 +1 @@\n+{physical_line}{trailing_lf}"
     fake.files = [file_entry(filename="x.txt", status="added", additions=1,
                              deletions=0, changes=1, patch=patch_text)]
+    fake.sources[(HEAD, "x.txt")] = physical_line + trailing_lf
     github, state = GitHub(transport=fake), State(tmp_path / "state")
     attempt = prepare(state, github, REF, "review")
     assert attempt["status"] == "prepared"
@@ -472,6 +502,318 @@ def test_collection_metadata_race_cannot_reuse_completed_triage(tmp_path, field,
         assert raced["status"] == "skipped"
         assert raced["previous_id"] == first["id"]
     assert state.get(first["id"])["status"] == "completed"
+
+
+def test_full_sources_include_surrounding_methods_at_head_and_merge_base():
+    fake = FakeGitHub()
+    result = GitHub(transport=fake).collect(REF)
+    assert result["incomplete_reasons"] == []
+    assert result["sources"] == [
+        {"path": "src/main.py", "ref": HEAD, "side": "RIGHT", "text": fake.sources[(HEAD, "src/main.py")]},
+        {"path": "src/main.py", "ref": MERGE_BASE, "side": "LEFT", "text": fake.sources[(MERGE_BASE, "src/main.py")]},
+    ]
+    assert "surrounding_method" in result["sources"][0]["text"]
+    assert result["source_omissions"] == []
+    assert all("?ref=" + BASE not in argv[-1] for argv, _ in fake.calls if "/contents/src/" in argv[-1])
+
+
+@pytest.mark.parametrize("status,previous,expected", [
+    ("added", None, [("src/main.py", HEAD, "RIGHT")]),
+    ("removed", None, [("src/main.py", MERGE_BASE, "LEFT")]),
+    ("renamed", "src/old.py", [("src/main.py", HEAD, "RIGHT"), ("src/old.py", MERGE_BASE, "LEFT")]),
+    ("copied", "src/old.py", [("src/main.py", HEAD, "RIGHT"), ("src/old.py", MERGE_BASE, "LEFT")]),
+])
+def test_source_sides_and_old_paths(status, previous, expected):
+    fake = FakeGitHub()
+    fake.files = [file_entry(status=status, **({"previous_filename": previous} if previous else {}))]
+    result = GitHub(transport=fake).collect(REF)
+    assert result["incomplete_reasons"] == []
+    assert [(s["path"], s["ref"], s["side"]) for s in result["sources"]] == expected
+    source_calls = [argv[-1] for argv, _ in fake.calls if "/contents/src/" in argv[-1]]
+    assert len(source_calls) == len(expected)
+
+
+def test_triage_does_not_require_or_fetch_sources():
+    fake = FakeGitHub()
+    fake.sources.clear()
+    fake.files[0]["patch"] = None
+    result = GitHub(transport=fake).collect(REF, stage="triage")
+    assert result["incomplete_reasons"] == []
+    assert result["sources"] == []
+    assert result["source_omissions"] == []
+    assert all(HEAD not in argv[-1] and MERGE_BASE not in argv[-1]
+               for argv, _ in fake.calls if "/contents/" in argv[-1] or "/git/trees/" in argv[-1])
+
+
+def test_explicit_source_paths_are_pinned_quoted_and_deduplicated():
+    fake = FakeGitHub()
+    path = "lib/missing dependency#1?.py"
+    for ref in (HEAD, MERGE_BASE):
+        fake.sources[(ref, path)] = "def dependency():\n    return 'read only'\n"
+    result = GitHub(transport=fake).collect(REF, source_paths=(path, path, "src/main.py"))
+    assert result["incomplete_reasons"] == []
+    assert len(result["sources"]) == 4
+    assert {(s["path"], s["ref"]) for s in result["sources"] if s["path"] == path} == {
+        (path, HEAD), (path, MERGE_BASE)}
+    assert len([argv for argv, _ in fake.calls if "missing%20dependency%231%3F.py?ref=" in argv[-1]]) == 2
+
+
+@pytest.mark.parametrize("paths", [None, "src/main.py", ["../bad"], ["/tmp/x"], ["a%2fb"],
+                                   ["a\\b"], ["a//b"], ["a\nb"], ["a*"], [1], ["x"] * 25])
+def test_invalid_explicit_source_paths_rejected_before_any_request(paths):
+    fake = FakeGitHub()
+    with pytest.raises(ValueError):
+        GitHub(transport=fake).collect(REF, source_paths=paths)
+    assert fake.calls == []
+
+
+def test_triage_rejects_extra_source_requests_instead_of_silently_ignoring():
+    fake = FakeGitHub()
+    with pytest.raises(ValueError):
+        GitHub(transport=fake).collect(REF, stage="triage", source_paths=("src/main.py",))
+    assert fake.calls == []
+
+
+def test_pr_config_cannot_request_extra_sources():
+    fake = FakeGitHub()
+    fake.docs[".github/hermes-pr-reviewer.json"] = json.dumps({"sourcePaths": ["secrets.py"]})
+    result = GitHub(transport=fake).collect(REF)
+    assert "invalid_config" in result["incomplete_reasons"]
+    assert not any("secrets.py" in argv[-1] for argv, _ in fake.calls)
+
+
+def test_source_budget_omits_whole_files_and_records_each_missing_side():
+    fake = FakeGitHub()
+    budget = len(fake.sources[(HEAD, "src/main.py")])
+    result = GitHub(transport=fake, max_source_chars=budget).collect(REF, source_paths=("missing.py",))
+    assert result["sources"] == [{"path": "src/main.py", "ref": HEAD, "side": "RIGHT",
+                                  "text": fake.sources[(HEAD, "src/main.py")]}]
+    assert "sources_budget" in result["incomplete_reasons"]
+    assert "missing_source" in result["incomplete_reasons"]
+    assert result["source_omissions"] == [
+        {"path": "src/main.py", "ref": MERGE_BASE, "side": "LEFT", "reason": "sources_budget", "required": True},
+        {"path": "missing.py", "ref": HEAD, "side": "RIGHT", "reason": "missing_source", "required": True},
+        {"path": "missing.py", "ref": MERGE_BASE, "side": "LEFT", "reason": "missing_source", "required": True},
+    ]
+    assert not any(f"/contents/src/main.py?ref={MERGE_BASE}" in a[-1] for a, _ in fake.calls)
+
+
+def test_missing_changed_source_and_extra_dependency_are_not_clean():
+    fake = FakeGitHub()
+    del fake.sources[(HEAD, "src/main.py")]
+    result = GitHub(transport=fake).collect(REF, source_paths=("missing.py",))
+    assert "missing_source" in result["incomplete_reasons"]
+    assert len(result["source_omissions"]) == 3
+    assert all(o["required"] and o["reason"] == "missing_source" for o in result["source_omissions"])
+
+
+@pytest.mark.parametrize("response_updates", [
+    {"path": "other.py"}, {"sha": "f" * 40}, {"sha": None}, {"type": "symlink"},
+    {"type": "submodule"}, {"submodule_git_url": "https://example.invalid/repo"},
+    {"target": "src/main.py"}, {"size": 1}, {"content": "eA=="}, {"encoding": "none"},
+])
+def test_source_contents_identity_and_normal_file_are_verified(response_updates):
+    fake = FakeGitHub()
+    endpoint = f"repos/Org/repo/contents/src/main.py?ref={HEAD}"
+    fake.overrides[endpoint] = content_response("src/main.py", fake.sources[(HEAD, "src/main.py")], **response_updates)
+    result = GitHub(transport=fake).collect(REF)
+    assert "invalid_source" in result["incomplete_reasons"]
+    assert not any(s["side"] == "RIGHT" for s in result["sources"])
+    assert result["source_omissions"][0]["reason"] == "invalid_source"
+
+
+@pytest.mark.parametrize("text", [b"\xff", b"\x00binary"])
+def test_binary_sources_fail_closed(text):
+    fake = FakeGitHub()
+    fake.sources[(HEAD, "src/main.py")] = text
+    result = GitHub(transport=fake).collect(REF)
+    assert "invalid_source" in result["incomplete_reasons"]
+    assert not any(s["side"] == "RIGHT" for s in result["sources"])
+
+
+@pytest.mark.parametrize("mode,kind", [("120000", "blob"), ("160000", "commit"), ("040000", "tree")])
+def test_source_tree_rejects_symlinks_submodules_and_directories_before_contents(mode, kind):
+    fake = FakeGitHub()
+    fake.overrides[f"repos/Org/repo/git/trees/{HEAD}?recursive=1"] = response({
+        "sha": "e" * 40, "truncated": False, "tree": [
+            {"path": "src/main.py", "sha": blob_sha(fake.sources[(HEAD, "src/main.py")]), "type": kind, "mode": mode}]})
+    result = GitHub(transport=fake).collect(REF)
+    assert "invalid_source" in result["incomplete_reasons"]
+    assert not any(f"/contents/src/main.py?ref={HEAD}" in a[-1] for a, _ in fake.calls)
+
+
+def test_source_404_and_denial_cannot_masquerade_as_complete():
+    fake = FakeGitHub()
+    endpoint = f"repos/Org/repo/contents/src/main.py?ref={HEAD}"
+    fake.overrides[endpoint] = response({}, 404)
+    result = GitHub(transport=fake).collect(REF)
+    assert "missing_source" in result["incomplete_reasons"]
+    fake.overrides[endpoint] = response({"secret": "PRIVATE"}, 403)
+    with pytest.raises(GitHubError, match="403"):
+        GitHub(transport=fake).collect(REF)
+
+
+def test_relevant_docs_exclude_vendor_unrelated_readmes_and_ci_files():
+    fake = FakeGitHub()
+    wanted = ["AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", "src/AGENTS.md", "src/README.rst",
+              "src/CLAUDE.md", "ARCHITECTURE.md", "docs/architecture.md", "docs/workflow.md",
+              ".github/copilot-instructions.md"]
+    unwanted = [f"vendor/lib{i}/README.md" for i in range(50)] + [
+        "other/AGENTS.md", "other/README.md", "vendor/lib/architecture.md",
+        "docs/translations/es/README.md", ".github/workflows/a.yml", ".github/workflows/b.yaml"]
+    fake.docs.update({p: "Relevant guidance" for p in wanted})
+    fake.docs.update({p: "x" * 80_000 for p in unwanted})
+    result = GitHub(transport=fake).collect(REF)
+    assert result["incomplete_reasons"] == []
+    assert set(result["docs"]) == set(wanted + ["README.md"])
+    endpoints = [a[-1] for a, _ in fake.calls if "/contents/" in a[-1]]
+    assert all(not any("/contents/" + p + "?" in endpoint for endpoint in endpoints) for p in unwanted)
+
+
+def test_rename_ancestor_docs_and_trusted_extra_docs_are_required():
+    fake = FakeGitHub()
+    fake.files = [file_entry(status="renamed", previous_filename="old/location.py")]
+    fake.sources[(MERGE_BASE, "old/location.py")] = "before\nold\n"
+    fake.docs.update({"old/AGENTS.md": "Old subtree guidance", "src/AGENTS.md": "New subtree guidance",
+                      "unrelated/README.md": "Explicit trusted extra",
+                      ".github/hermes-pr-reviewer.json": json.dumps({"extraDocPaths": ["unrelated/README.md", "absent.md"]})})
+    result = GitHub(transport=fake).collect(REF)
+    assert set(result["docs"]) >= {"old/AGENTS.md", "src/AGENTS.md", "unrelated/README.md"}
+    assert "missing_document" in result["incomplete_reasons"]
+    assert {"path": "absent.md", "ref": BASE, "reason": "missing_document", "required": True} in result["doc_omissions"]
+
+
+def test_document_known_to_tree_but_missing_contents_fails_closed():
+    fake = FakeGitHub()
+    fake.overrides[f"repos/Org/repo/contents/README.md?ref={BASE}"] = response({}, 404)
+    result = GitHub(transport=fake).collect(REF)
+    assert "missing_document" in result["incomplete_reasons"]
+    assert {"path": "README.md", "ref": BASE, "reason": "missing_document", "required": True} in result["doc_omissions"]
+
+
+def test_doc_budget_and_optional_absence_have_distinct_omissions():
+    fake = FakeGitHub()
+    fake.docs["AGENTS.md"] = "x" * 100
+    result = GitHub(transport=fake, max_doc_chars=30).collect(REF)
+    assert "docs_budget" in result["incomplete_reasons"]
+    assert {"path": "AGENTS.md", "ref": BASE, "reason": "docs_budget", "required": True} in result["doc_omissions"]
+    assert {"path": "WORKFLOW.md", "ref": BASE, "reason": "missing_document", "required": False} in result["doc_omissions"]
+    assert result["docs"]["README.md"] == fake.docs["README.md"]
+
+
+@pytest.mark.parametrize("path", ["AGENTS.md", ".github/hermes-pr-reviewer.json"])
+def test_trusted_docs_and_config_reject_tree_symlinks_even_when_contents_reports_file(path):
+    fake = FakeGitHub()
+    fake.docs[path] = "{}"
+    fake.tree["tree"] = [{"path": path, "type": "blob", "mode": "120000"}]
+    result = GitHub(transport=fake).collect(REF)
+    assert ("invalid_config" if path.endswith(".json") else "invalid_document") in result["incomplete_reasons"]
+    assert not any("/contents/" + path + "?" in a[-1] for a, _ in fake.calls)
+
+
+def test_doc_blob_hash_is_verified_against_tree_not_just_contents_metadata():
+    fake = FakeGitHub()
+    fake.overrides[f"repos/Org/repo/contents/README.md?ref={BASE}"] = content_response("README.md", "forged doc")
+    result = GitHub(transport=fake).collect(REF)
+    assert "invalid_document" in result["incomplete_reasons"]
+    assert "README.md" not in result["docs"]
+
+
+def test_ignored_copy_cannot_cancel_required_original_source():
+    fake = FakeGitHub()
+    fake.meta["changed_files"] = 2
+    fake.files.append(file_entry(filename="vendor/copy.py", status="copied", previous_filename="src/main.py"))
+    fake.docs[".github/hermes-pr-reviewer.json"] = json.dumps({"ignorePatterns": ["vendor/*"]})
+    result = GitHub(transport=fake).collect(REF)
+    assert result["incomplete_reasons"] == []
+    assert {(s["path"], s["side"]) for s in result["sources"]} == {("src/main.py", "RIGHT"), ("src/main.py", "LEFT")}
+    assert result["source_omissions"] == [{"path": "vendor/copy.py", "ref": HEAD, "side": "RIGHT",
+                                           "reason": "ignored_file", "required": False}]
+
+
+@pytest.mark.parametrize("budget", [0, -1, True, 1.5, None])
+def test_source_budget_requires_positive_integer(budget):
+    with pytest.raises(ValueError):
+        GitHub(max_source_chars=budget)
+
+
+def test_source_budget_counts_utf8_bytes_and_keeps_empty_files():
+    fake = FakeGitHub()
+    fake.sources[(HEAD, "src/main.py")] = "éé"
+    fake.sources[(MERGE_BASE, "src/main.py")] = ""
+    result = GitHub(transport=fake, max_source_chars=3).collect(REF)
+    assert result["incomplete_reasons"] == ["sources_budget"]
+    assert result["sources"] == [{"path": "src/main.py", "ref": MERGE_BASE, "side": "LEFT", "text": ""}]
+
+
+def test_source_blob_digest_rejects_same_length_content_with_claimed_correct_sha():
+    fake = FakeGitHub()
+    original = fake.sources[(HEAD, "src/main.py")]
+    fake.overrides[f"repos/Org/repo/contents/src/main.py?ref={HEAD}"] = content_response(
+        "src/main.py", "x" * len(original), sha=blob_sha(original))
+    result = GitHub(transport=fake).collect(REF)
+    assert "invalid_source" in result["incomplete_reasons"]
+    assert not any(s["side"] == "RIGHT" for s in result["sources"])
+
+
+@pytest.mark.parametrize("mode", ["100644", "100755"])
+def test_normal_tree_modes_are_read_as_data_only(mode):
+    fake = FakeGitHub()
+    text = "import os\nos.system('never execute this')\n"
+    fake.sources[(HEAD, "src/main.py")] = text
+    fake.overrides[f"repos/Org/repo/git/trees/{HEAD}?recursive=1"] = response({
+        "sha": "e" * 40, "truncated": False, "tree": [{"path": "src/main.py", "type": "blob",
+        "mode": mode, "sha": blob_sha(text), "size": len(text)}]})
+    result = GitHub(transport=fake).collect(REF)
+    assert result["incomplete_reasons"] == []
+    assert result["sources"][0]["text"] == text
+    assert all(argv[:6] == ["gh", "api", "--hostname", "github.com", "--method", "GET"] for argv, _ in fake.calls)
+
+
+@pytest.mark.parametrize("malformed", ["truncated", "duplicate", "invalid_sha", "invalid_size", "invalid_tree_sha"])
+def test_source_tree_gaps_and_ambiguities_fail_closed(malformed):
+    fake = FakeGitHub()
+    text = fake.sources[(HEAD, "src/main.py")]
+    entry = {"path": "src/main.py", "type": "blob", "mode": "100644", "sha": blob_sha(text), "size": len(text)}
+    tree = {"sha": "e" * 40, "truncated": malformed == "truncated", "tree": [entry]}
+    if malformed == "duplicate":
+        tree["tree"].append(dict(entry))
+    elif malformed == "invalid_sha":
+        entry["sha"] = "bad"
+    elif malformed == "invalid_size":
+        entry["size"] = True
+    elif malformed == "invalid_tree_sha":
+        tree["sha"] = "bad"
+    fake.overrides[f"repos/Org/repo/git/trees/{HEAD}?recursive=1"] = response(tree)
+    result = GitHub(transport=fake).collect(REF)
+    assert result["incomplete_reasons"]
+    if malformed != "truncated":
+        assert not any(s["side"] == "RIGHT" for s in result["sources"])
+
+
+def test_deep_changed_ancestors_not_sibling_guidance_are_collected():
+    fake = FakeGitHub()
+    path = "src/package/nested/main.py"
+    fake.files = [file_entry(filename=path)]
+    for ref in (HEAD, MERGE_BASE):
+        fake.sources[(ref, path)] = fake.sources[(ref, "src/main.py")]
+    wanted = {"src/AGENTS.md", "src/package/CLAUDE.md", "src/package/nested/README.md"}
+    fake.docs.update({p: "Relevant" for p in wanted})
+    fake.docs["src/package/sibling/AGENTS.md"] = "Unrelated"
+    result = GitHub(transport=fake).collect(REF)
+    assert result["incomplete_reasons"] == []
+    assert set(result["docs"]) == wanted | {"README.md"}
+
+
+def test_invalid_preferred_config_never_activates_fallback_ignores():
+    fake = FakeGitHub()
+    fake.docs[".github/hermes-pr-reviewer.json"] = "{}"
+    fake.docs[".hermes/pr-reviewer.json"] = json.dumps({"ignorePatterns": ["*"]})
+    fake.tree["tree"] = [{"path": ".github/hermes-pr-reviewer.json", "mode": "120000"}]
+    result = GitHub(transport=fake).collect(REF)
+    assert "invalid_config" in result["incomplete_reasons"]
+    assert result["policy"]["ignorePatterns"] == []
+    assert not any("/contents/.hermes/pr-reviewer.json?" in a[-1] for a, _ in fake.calls)
 
 
 if __name__ == "__main__":

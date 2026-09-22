@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import binascii
 import fnmatch
+import hashlib
 from email.utils import parsedate_to_datetime
 import json
 import math
@@ -43,6 +44,7 @@ DEFAULT_DOC_PATHS = (
 )
 MAX_RESPONSE_CHARS = 16_000_000
 MAX_DOC_PATHS = 32
+MAX_EXTRA_SOURCE_PATHS = 24
 MAX_COMPARE_FILES = 300
 
 
@@ -141,18 +143,21 @@ class GitHub:
     final race check share that budget. This instance is not thread-safe.
     All commands have fixed argv, explicit GET/hostname, no shell or pagination.
     Default limits: 20s/request, 3 attempts, 64 requests, 120s/operation,
-    120k patch characters and 60k doc characters. Oversized patches/docs are
-    omitted, not silently clipped. Config allows only extraDocPaths and
+    120k patch characters, 60k doc bytes, and 400k source bytes (UTF-8).
+    The legacy *_chars limit names conservatively bound bytes for full files.
+    Oversized patches/docs/sources are omitted whole, not silently clipped.
+    Config allows only extraDocPaths and
     ignorePatterns (no graph, command, plugin, or executable options).
     """
 
     def __init__(self, *, transport=None, sleep=None, clock=None,
                  request_timeout=20, max_attempts=3, max_requests=64,
-                 total_timeout=120, max_patch_chars=120_000, max_doc_chars=60_000):
+                 total_timeout=120, max_patch_chars=120_000, max_doc_chars=60_000,
+                 max_source_chars=400_000):
         for value in (request_timeout, total_timeout):
             if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
                 raise ValueError("Timeouts must be finite positive numbers")
-        for value in (max_attempts, max_requests, max_patch_chars, max_doc_chars):
+        for value in (max_attempts, max_requests, max_patch_chars, max_doc_chars, max_source_chars):
             if type(value) is not int or value < 1:
                 raise ValueError("Budgets must be positive integers")
         self.transport = transport
@@ -164,10 +169,12 @@ class GitHub:
         self.total_timeout = total_timeout
         self.max_patch_chars = max_patch_chars
         self.max_doc_chars = max_doc_chars
+        self.max_source_chars = max_source_chars
 
     def _begin(self):
         self._deadline = self.clock() + self.total_timeout
         self._requests = 0
+        self._trees = {}
 
     def _remaining(self):
         remaining = self._deadline - self.clock()
@@ -278,23 +285,42 @@ class GitHub:
         except (KeyError, TypeError, ValueError):
             raise GitHubError("GitHub returned invalid PR metadata or target identity") from None
 
-    def collect(self, ref: str, *, stage: str = "review") -> dict:
-        """Return a SHA-pinned snapshot; incomplete_reasons is authoritative."""
+    def collect(self, ref: str, *, stage: str = "review", source_paths=()) -> dict:
+        """Return a SHA-pinned snapshot; incomplete_reasons is authoritative.
+
+        Review sources are full files: {path, ref, side, text}, with RIGHT at
+        head and LEFT at merge-base (not the current base). source_paths is an
+        explicit caller-supplied list/tuple of at most 24 literal repo paths,
+        never inferred from PR text/config or executed. Extras require both
+        sides; absent dependencies fail closed. Triage rejects nonempty extras
+        and transmits no sources. Omissions carry path/ref/reason/required and,
+        for sources, side. Missing optional default docs do not block coverage.
+        All present selected docs and trusted extraDocPaths are required.
+        """
         if stage not in {"triage", "review"}:
             raise ValueError("invalid collection stage")
+        if (not isinstance(source_paths, (tuple, list)) or len(source_paths) > MAX_EXTRA_SOURCE_PATHS or
+                any(not _safe_path(path) for path in source_paths)):
+            raise ValueError("source_paths must contain at most 24 safe literal repository paths")
+        if stage == "triage" and source_paths:
+            raise ValueError("extra source paths require review stage")
         canonical = parse_ref(ref)
         self._begin()
         result = self._metadata(canonical)
-        result.update(merge_base_sha=None, files=[], docs={}, policy={"config_path": None, "extraDocPaths": [],
-                                              "ignorePatterns": []}, incomplete_reasons=[])
+        result.update(merge_base_sha=None, files=[], docs={}, sources=[], source_omissions=[], doc_omissions=[],
+                      policy={"config_path": None, "extraDocPaths": [], "ignorePatterns": []}, incomplete_reasons=[])
         reasons = result["incomplete_reasons"]
         repo, base, head = result["repo"], result["base_sha"], result["head_sha"]
         compare = self._request(f"repos/{repo}/compare/{base}...{head}?per_page=100&page=1")
+        tree = self._tree(repo, base, reasons)
         for config_path in CONFIG_PATHS:
-            text = self._document(repo, base, config_path, reasons, limit=16_000, config=True)
-            if text is None:
+            if config_path not in tree:
                 continue
             result["policy"]["config_path"] = config_path
+            text, failure = self._text(repo, base, config_path, tree[config_path], limit=16_000)
+            if failure:
+                reasons.append("invalid_config")
+                break  # Invalid higher-priority config must not activate fallback policy.
             try:
                 config = _json(text)
                 if not isinstance(config, dict) or set(config) - {"extraDocPaths", "ignorePatterns"}:
@@ -309,20 +335,33 @@ class GitHub:
                 reasons.append("invalid_config")
             break  # Ordered config precedence, as in the legacy collector.
         self._files(compare, result, stage=stage)
-        tree = self._request(f"repos/{repo}/git/trees/{base}?recursive=1")
-        discovered = self._doc_paths(tree, reasons)
-        paths = list(dict.fromkeys([*DEFAULT_DOC_PATHS, *result["policy"]["extraDocPaths"], *discovered]))
-        if len(paths) > MAX_DOC_PATHS:
-            reasons.append("docs_count_limit")
+        discovered = self._doc_paths(tree, result["files"])
+        extras = result["policy"]["extraDocPaths"]
+        paths = list(dict.fromkeys([*DEFAULT_DOC_PATHS, *extras, *discovered]))
         remaining = self.max_doc_chars
-        for path in paths[:MAX_DOC_PATHS]:
-            if remaining <= 0:
-                reasons.append("docs_budget")
-                break
-            text = self._document(repo, base, path, reasons, limit=remaining)
-            if text is not None:
+        selected_count = 0
+        for path in paths:
+            required = path in tree or path in extras
+            entry = tree.get(path, _MISSING)
+            if required:
+                selected_count += 1
+            if required and selected_count > MAX_DOC_PATHS:
+                text, failure = None, "docs_count_limit"
+            else:
+                text, failure = self._text(repo, base, path, entry, limit=remaining)
+                if failure:
+                    failure = {"missing": "missing_document", "invalid": "invalid_document",
+                               "budget": "docs_budget"}[failure]
+            if failure:
+                result["doc_omissions"].append({"path": path, "ref": base, "reason": failure, "required": required})
+                if required:
+                    reasons.append(failure)
+            else:
+                assert text is not None
                 result["docs"][path] = text
-                remaining -= len(text)
+                remaining -= len(text.encode("utf-8"))
+        if stage == "review":
+            self._sources(result, source_paths)
         final = self._metadata(canonical)
         keys = ("base_sha", "head_sha", "state", "draft", "changed_files")
         if stage == "triage":
@@ -399,60 +438,142 @@ class GitHub:
                 remaining -= len(patch)
             result["files"].append(clean)
 
-    def _document(self, repo, base, path, reasons, *, limit, config=False):
-        if not _safe_path(path):
-            reasons.append("invalid_config" if config else "invalid_document")
-            return None
-        data = self._request(f"repos/{repo}/contents/{quote(path, safe='/')}?ref={base}", optional=True)
+    def _sources(self, result, source_paths):
+        """Collect required sides once, without a checkout or dependency execution."""
+        head, merge_base = result["head_sha"], result["merge_base_sha"]
+        wanted = {}
+        for item in result["files"]:
+            name, status = item["filename"], item["status"]
+            required = not item.get("ignored", False)
+            if status != "removed":
+                key = (name, head, "RIGHT")
+                wanted[key] = wanted.get(key, False) or required
+            if status != "added":
+                old = item.get("previous_filename") if status in {"renamed", "copied"} else name
+                if old is None:
+                    result["source_omissions"].append({"path": name, "ref": merge_base, "side": "LEFT",
+                                                       "reason": "invalid_source", "required": required})
+                    if required:
+                        result["incomplete_reasons"].append("invalid_source")
+                else:
+                    key = (old, merge_base, "LEFT")
+                    wanted[key] = wanted.get(key, False) or required
+        for path in source_paths:
+            # Explicit caller requests may collect an otherwise ignored file.
+            wanted[(path, head, "RIGHT")] = True
+            wanted[(path, merge_base, "LEFT")] = True
+        remaining = self.max_source_chars
+        for (path, ref, side), required in wanted.items():
+            text = None
+            if not required:
+                failure = "ignored_file"
+            elif not _sha(ref):
+                failure = "invalid_merge_base"
+            else:
+                tree = self._tree(result["repo"], ref, result["incomplete_reasons"])
+                text, failure = self._text(result["repo"], ref, path, tree.get(path, _MISSING), limit=remaining)
+                if failure:
+                    failure = {"missing": "missing_source", "invalid": "invalid_source",
+                               "budget": "sources_budget"}[failure]
+            if failure:
+                result["source_omissions"].append({"path": path, "ref": ref, "side": side,
+                                                   "reason": failure, "required": required})
+                if required:
+                    result["incomplete_reasons"].append(failure)
+            else:
+                assert text is not None
+                result["sources"].append({"path": path, "ref": ref, "side": side, "text": text})
+                remaining -= len(text.encode("utf-8"))
+
+    def _text(self, repo, ref, path, entry, *, limit):
+        """Read a normal tree blob at an immutable ref, or return an omission.
+
+        GitHub's contents endpoint can dereference symlinks as type=file. The
+        SHA-pinned tree's mode AND blob identity are therefore checked first.
+        The decoded Git blob hash must match both REST responses. This verifies
+        consistency of GitHub evidence, not independent/trusted PR provenance.
+        """
+        if entry is _MISSING:
+            return None, "missing"
+        if (not _safe_path(path) or not _sha(ref) or not isinstance(entry, dict) or
+                entry.get("type") != "blob" or entry.get("mode") not in {"100644", "100755"} or
+                not _sha(entry.get("sha")) or not _integer(entry.get("size"))):
+            return None, "invalid"
+        if entry["size"] > limit:
+            return None, "budget"
+        data = self._request(f"repos/{repo}/contents/{quote(path, safe='/')}?ref={ref}", optional=True)
         if data is _MISSING:
-            return None
-        invalid = "invalid_config" if config else "invalid_document"
-        budget = "invalid_config" if config else "docs_budget"
+            return None, "missing"
         if (not isinstance(data, dict) or data.get("type") != "file" or
                 data.get("path") != path or data.get("encoding") != "base64" or
-                not _integer(data.get("size")) or not isinstance(data.get("content"), str)):
-            reasons.append(invalid)
-            return None
-        if data["size"] > limit or len(data["content"]) > limit * 2 + 1024:
-            reasons.append(budget)
-            return None
+                data.get("sha") != entry["sha"] or "target" in data or "submodule_git_url" in data or
+                not _integer(data.get("size")) or data["size"] != entry["size"] or
+                not isinstance(data.get("content"), str)):
+            return None, "invalid"
+        if len(data["content"]) > limit * 2 + 1024:
+            return None, "budget"
         try:
             raw = base64.b64decode(data["content"].replace("\n", "").replace("\r", ""), validate=True)
             text = raw.decode("utf-8")
         except (ValueError, binascii.Error, UnicodeError):
-            reasons.append(invalid)
-            return None
-        if len(raw) != data["size"] or "\x00" in text:
-            reasons.append(invalid)
-            return None
-        if len(text) > limit:
-            reasons.append(budget)
-            return None
-        return text
+            return None, "invalid"
+        blob_sha = hashlib.sha1(f"blob {len(raw)}\0".encode("ascii") + raw).hexdigest()
+        if len(raw) != data["size"] or "\x00" in text or blob_sha != entry["sha"]:
+            return None, "invalid"
+        return text, None
 
-    @staticmethod
-    def _doc_paths(tree, reasons):
+    def _tree(self, repo, ref, reasons):
+        if ref in self._trees:
+            return self._trees[ref]
+        tree = self._request(f"repos/{repo}/git/trees/{ref}?recursive=1")
+        entries = {}
+        self._trees[ref] = entries
+        # The returned SHA identifies the root tree, not its commit; do not
+        # compare it to ref or label the result independent commit attestation.
         if (not isinstance(tree, dict) or not isinstance(tree.get("tree"), list) or
-                type(tree.get("truncated")) is not bool):
+                type(tree.get("truncated")) is not bool or not _sha(tree.get("sha"))):
             reasons.append("invalid_tree")
-            return []
+            return entries
         if tree["truncated"]:
             reasons.append("truncated_tree")
-        paths = set()
         for entry in tree["tree"]:
             if not isinstance(entry, dict) or not _safe_path(entry.get("path")):
                 reasons.append("invalid_tree")
                 continue
             path = entry["path"]
-            name = path.rsplit("/", 1)[-1].lower()
-            wanted = (name in {"agents.md", "readme", "readme.md", "readme.rst", "contributing.md"} or
-                      (name.startswith(("architecture", "workflow")) and name.endswith((".md", ".rst", ".txt"))) or
-                      (path.startswith(".github/workflows/") and name.endswith((".yml", ".yaml"))) or
-                      (path.startswith(".github/instructions/") and name.endswith(".instructions.md")))
-            if not wanted:
+            if path in entries:
+                reasons.append("invalid_tree")
+                entries[path] = None  # Never consume an ambiguous tree identity.
+            else:
+                entries[path] = entry
+        return entries
+
+    @staticmethod
+    def _doc_paths(tree, files):
+        """Select guidance, not a repository-wide documentation/CI crawl.
+
+        Root and changed-path ancestors (including rename/copy origins) supply
+        README/agent/contribution guidance. Architecture/workflow documents are
+        selected directly in root, docs/, and changed-path ancestors. Additional
+        arbitrary documents or CI files require trusted extraDocPaths.
+        """
+        ancestors = {""}
+        for item in files:
+            if item.get("ignored"):
                 continue
-            if entry.get("type") != "blob" or entry.get("mode") not in {"100644", "100755"}:
-                reasons.append("invalid_document")
-                continue
-            paths.add(path)
+            for path in (item["filename"], item.get("previous_filename", item["filename"])):
+                parts = path.split("/")[:-1]
+                ancestors.update("/".join(parts[:index]) for index in range(1, len(parts) + 1))
+        guidance = {"agents.md", "claude.md", ".cursorrules", "readme", "readme.md", "readme.rst",
+                    "readme.txt", "contributing", "contributing.md", "contributing.rst", "contributing.txt"}
+        paths = []
+        for path in tree:
+            parent, _, name = path.rpartition("/")
+            name = name.lower()
+            architecture = (name.startswith(("architecture", "workflow")) and
+                            name.endswith((".md", ".rst", ".txt")))
+            if ((parent in ancestors and name in guidance) or
+                    (architecture and (parent in ancestors or parent == "docs")) or
+                    path == ".github/copilot-instructions.md"):
+                paths.append(path)
         return sorted(paths)

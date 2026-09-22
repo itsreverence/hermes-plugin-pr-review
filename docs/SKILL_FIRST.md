@@ -5,7 +5,8 @@ plugin. It does not install or enable the skill, modify the plugin, scan
 repositories, create cron jobs, or change existing services/webhooks.
 
 The candidate bundle is [`skills/hermes-pr-review`](../skills/hermes-pr-review/SKILL.md).
-It runs without Hermes Python imports, plugin discovery, an HTTP receiver,
+The manual prepare/finalize path runs without Hermes Python imports, plugin
+discovery, an HTTP receiver,
 systemd, Tailscale, a graph index, or a separate model SDK. Python 3.11+ and `gh`
 are the helper dependencies. Linux is exercised; macOS uses the same POSIX
 primitives but has not been live-tested. Windows is not supported by this PoC.
@@ -45,7 +46,8 @@ inspection. No GitHub mutation commands are implemented.
 ## Implementation
 
 - `github.py`: strict PR references; GET-only, bounded GitHub reads; immutable
-  compare/base-doc collection; conservative coverage and final collection check.
+  compare/base-doc collection; bounded changed-file and explicit dependency source
+  at head and merge base; conservative coverage and final collection check.
 - `state.py`: private SQLite attempts, stage-separated dedupe, expiring claims,
   immutable attempt identity, failure retention, and short write transactions.
 - `artifacts.py`: owner-private, no-overwrite, symlink-rejecting evidence files.
@@ -53,10 +55,38 @@ inspection. No GitHub mutation commands are implemented.
   final head/base recheck, local reports, and workflow/input digests.
 - `pr_review.py`: thin explicit-state-root CLI, including status and failure recording.
 
-The initial collector uses immutable GitHub compare output rather than mutable
-PR-file pagination. Its server-side 300-file cap and count/patch checks fail
-closed. It does not pretend that this is the future repository scanner's complete
-pagination implementation. Scanning remains a separate next milestone.
+The collector uses immutable GitHub compare output rather than mutable PR-file
+pagination. Its server-side 300-file cap and count/patch checks fail closed.
+
+## Experimental helpers, not scheduled operation
+
+`pr_review.py judge ATTEMPT --provider openai-codex --model MODEL` is an optional,
+supervised alternative to writing a judgment in the current session. It requires
+the installed Hermes Python dependencies and source on PYTHONPATH. It uses the
+shared rubric, an explicit provider route, and no model tools. The call requires
+a POSIX main thread with no active real-time alarm. Decoded event budgets run
+before parser accumulation, and a wall deadline spans provider resolution and
+streaming. The adapter disables SDK retries and closes its owned client. These
+limits do not bound a single SSE frame before the SDK decodes it. The trusted host
+still reads provider authentication; this is not an OS sandbox. Validate this
+in-tree adapter against Hermes upgrades rather than assuming SDK stability.
+
+`pr_scan.py --state-root PRIVATE_STATE scan --repos-file REPOS_JSON` performs
+shadow discovery. The file must contain a nonempty explicit JSON list of
+`owner/repo` names. No repository discovery or enrollment defaults apply. The
+scanner paginates open PRs, excludes drafts, and stores pending versions in a
+separate private `scanner.sqlite3`. `status` reads routing state.
+
+Repeated scans preserve pending, backoff, held, and completed versions. Queue
+identity includes head, base, title, body, and trusted workflow revision. A failed
+scan preserves prior work and emits `wakeAgent:false`. A successful empty scan
+also emits `wakeAgent:false`; due pending work continues to wake after unchanged
+scans. Discovery is not an atomic GitHub snapshot.
+
+Neither helper installs a job, posts on GitHub, or binds a scanner completion to
+a verified attempt automatically. There is no scheduled worker in this release.
+The trusted-worker API requires the caller to verify that binding. Model output
+must never acknowledge queue work directly.
 
 ## Verification
 
@@ -77,20 +107,21 @@ Fixture success is not evidence of live model behavior or production deployment.
 The [verification record](SKILL_FIRST_VERIFICATION.md) separates automated tests,
 real manual runs, observed holds, and the remaining gates.
 
-## What is not approved or implemented
+## Release boundary
 
-No scheduled scanner, repository enrollment, installation, automatic review,
-GitHub posting, service replacement, or live migration. The default session still
+Manual installation follows the separate [pinned installation guide](SKILL_FIRST_INSTALL.md).
+Installation does not enable scheduled scanning, repository enrollment, automatic
+review, GitHub posting, service replacement, or live migration. The default session still
 has its configured tools/credentials: this skill is not a sandbox. Unattended
 reviews require a separate execution/credential restriction proof before rollout.
 
 ## Next gate and rollback
 
-First prove real manual triage/review, unchanged-head reuse, intentional rerun,
-and honest incomplete/failure handling. The initial live checks establish those
-mechanics, but also expose missing surrounding-source context and overbroad
-base-document collection. Address those bounded context gaps and evaluate real
-positive findings before building a paginated allowlisted scanner in shadow mode.
+Complete the useful manual-review gate, independent review, and hosted CI before
+installation. Full source collection and relevant document selection address the
+initial context gaps. The [source-enriched verification record](SKILL_FIRST_V02_VERIFICATION.md)
+records real positive findings, a quiet control, and the fresh-session handoff.
+The scanner can be exercised independently in shadow mode without model calls.
 Only after that consider one-candidate scheduled runs with a no-change wake gate.
 
 Rollback of this candidate is to stop invoking its helper. Keep its private state
