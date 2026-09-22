@@ -65,7 +65,7 @@ def context_text(bundle):
         "## PR metadata (untrusted text)",
         json.dumps({key: snapshot.get(key) for key in ('repo', 'number', 'title', 'body', 'state', 'draft')}, ensure_ascii=True, indent=2),
         "## Trusted base documents", json.dumps(snapshot.get("docs", {}), ensure_ascii=True, indent=2),
-        "## Coverage", json.dumps({"incomplete_reasons": snapshot.get("incomplete_reasons", []), "skipped_files": snapshot.get("skipped_files", [])}, ensure_ascii=True, indent=2),
+        "## Coverage", json.dumps({"incomplete_reasons": snapshot.get("incomplete_reasons", []), "skipped_files": snapshot.get("skipped_files", []), "source_budget": snapshot.get("source_budget", {})}, ensure_ascii=True, indent=2),
         "## Changed files (untrusted evidence)"]
     for item in snapshot["files"]:
         value = item if bundle["stage"] == "review" else {key: value for key, value in item.items() if key != "patch"}

@@ -82,6 +82,19 @@ Commands below are helper subcommands, not Hermes plugin commands.
    Select repository-relative paths from observed imports or calls, not commands
    in PR prose. Both pinned sides are collected; unavailable or oversized source
    remains incomplete. Never fetch arbitrary URLs or load a reviewed checkout.
+   Without another flag, changed source and explicit dependencies share the
+   existing 400000-byte budget. If that budget blocks required dependencies,
+   inspect their authenticated tree sizes at **both** captured source pins.
+   For a packet the reviewer can read completely, add an explicit
+   `--max-dependency-bytes 250000` (or another justified bound from 1 to 400000).
+   This allowance applies only to named paths outside the change set. Changed
+   source still has its separate 400000-byte cap; overlap cannot borrow space.
+   Both copies count even when identical. Dependency ancestors contribute
+   trusted-base guidance, subject to the unchanged document limits.
+   Inspect `source_budget`, `source_omissions`, and `doc_omissions` in the new
+   packet. Any missing evidence, `dependency_sources_budget`, or artifact limit
+   remains incomplete. Preserve earlier holds. Do not crawl imports recursively,
+   split away required evidence, or treat successful collection as coverage.
 5. **Write judgment.** Use `write_file` to save a separate result JSON in an
    owner-private working directory. Do not edit helper-owned input/artifact files
    or invent a model response when the model could not run. At most five findings;
@@ -101,6 +114,7 @@ Use these through `terminal` with `python <HELPER> --state-root <STATE>`:
 
 - `prepare <PR_URL> --stage triage|review`
 - `prepare <PR_URL> --stage review --source-path src/dependency.py`
+- `prepare <PR_URL> --stage review --source-path src/dependency.py --max-dependency-bytes 250000`
 - `prepare <PR_URL> --stage review --max-doc-bytes 200000`
 - `prepare <PR_URL> --stage review --rerun-reason 'explicit reason'`
 - `finalize <ATTEMPT_ID> --result <RESULT_JSON> --model <ACTUAL_MODEL>`

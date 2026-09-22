@@ -20,6 +20,17 @@ def document_budget(value):
     raise argparse.ArgumentTypeError("must be an integer from 1 to 1000000")
 
 
+def dependency_budget(value):
+    """Explicit dependency allowance; changed-source limits stay independent."""
+    try:
+        number = int(value)
+        if 1 <= number <= 400_000:
+            return number
+    except ValueError:
+        pass
+    raise argparse.ArgumentTypeError("must be an integer from 1 to 400000")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-root", required=True, type=Path, help="explicit private state directory (separate from legacy pr-reviewer)")
@@ -32,6 +43,7 @@ def main(argv=None):
     collect.add_argument("--allow-draft", action="store_true")
     collect.add_argument("--source-path", action="append", default=[], help="explicit repository-relative source dependency, fetched at pinned head and merge base; repeatable")
     collect.add_argument("--max-doc-bytes", type=document_budget, default=60_000, help="total trusted-base document UTF-8 bytes (default: 60000; range: 1..1000000); omissions still block review")
+    collect.add_argument("--max-dependency-bytes", type=dependency_budget, help="opt-in separate UTF-8 byte allowance for explicit unchanged dependencies at both pins (1..400000); changed-source limit remains 400000")
     finish = commands.add_parser("finalize", help="validate an agent result and recheck the PR snapshot")
     finish.add_argument("attempt")
     finish.add_argument("--result", required=True, type=Path)
@@ -48,6 +60,8 @@ def main(argv=None):
     fail.add_argument("attempt")
     fail.add_argument("--reason", required=True, choices=["model_unavailable", "model_timeout", "operator_cancelled", "insufficient_context"])
     args = parser.parse_args(argv)
+    if args.command == "prepare" and args.max_dependency_bytes is not None and (args.stage != "review" or not args.source_path):
+        parser.error("--max-dependency-bytes requires --stage review and --source-path")
     try:
         state = State(args.state_root)
         if args.command == "status":
@@ -56,7 +70,7 @@ def main(argv=None):
             result = state.finish(args.attempt, "failed", error=args.reason)
         else:
             from pr_review_lib.github import GitHub, parse_ref
-            github = GitHub(max_doc_chars=args.max_doc_bytes) if args.command == "prepare" else GitHub()
+            github = GitHub(max_doc_chars=args.max_doc_bytes, max_dependency_chars=args.max_dependency_bytes) if args.command == "prepare" else GitHub()
             if args.command == "prepare":
                 result = prepare(state, github, parse_ref(args.pr), args.stage, rerun_reason=args.rerun_reason, allow_closed=args.allow_closed, allow_draft=args.allow_draft, source_paths=tuple(args.source_path))
             elif args.command == "judge":

@@ -161,6 +161,9 @@ class GitHub:
     Default limits: 20s/request, 3 attempts, 64 requests, 120s/operation,
     120k patch characters, 60k doc bytes, and 400k source bytes (UTF-8).
     The legacy *_chars limit names conservatively bound bytes for full files.
+    max_dependency_chars=None keeps that shared source pool. An explicit
+    1..400000 byte budget adds a separate pool only for caller-selected paths
+    absent from changed-file names (including ignored files and old names).
     Oversized patches/docs/sources are omitted whole, not silently clipped.
     Config allows only extraDocPaths and
     ignorePatterns (no graph, command, plugin, or executable options).
@@ -169,13 +172,16 @@ class GitHub:
     def __init__(self, *, transport=None, sleep=None, clock=None,
                  request_timeout=20, max_attempts=3, max_requests=64,
                  total_timeout=120, max_patch_chars=120_000, max_doc_chars=60_000,
-                 max_source_chars=400_000):
+                 max_source_chars=400_000, max_dependency_chars=None):
         for value in (request_timeout, total_timeout):
             if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
                 raise ValueError("Timeouts must be finite positive numbers")
         for value in (max_attempts, max_requests, max_patch_chars, max_doc_chars, max_source_chars):
             if type(value) is not int or value < 1:
                 raise ValueError("Budgets must be positive integers")
+        if max_dependency_chars is not None and (
+                type(max_dependency_chars) is not int or not 1 <= max_dependency_chars <= 400_000):
+            raise ValueError("max_dependency_chars must be an integer from 1 through 400000")
         self.transport = transport
         self.sleep = sleep or time.sleep
         self.clock = clock or time.monotonic
@@ -186,6 +192,7 @@ class GitHub:
         self.max_patch_chars = max_patch_chars
         self.max_doc_chars = max_doc_chars
         self.max_source_chars = max_source_chars
+        self.max_dependency_chars = max_dependency_chars
 
     def _begin(self):
         self._deadline = self.clock() + self.total_timeout
@@ -312,6 +319,10 @@ class GitHub:
         and transmits no sources. Omissions carry path/ref/reason/required and,
         for sources, side. Missing optional default docs do not block coverage.
         All present selected docs and trusted extraDocPaths are required.
+        Explicit source ancestors also select guidance from the trusted base.
+        source_budget reports admitted UTF-8 bytes charged to each pool, not
+        requested or omitted bytes. Shared mode charges everything to source;
+        dependency_limit_bytes is None and dependency_used_bytes is zero.
         """
         if stage not in {"triage", "review"}:
             raise ValueError("invalid collection stage")
@@ -320,11 +331,16 @@ class GitHub:
             raise ValueError("source_paths must contain at most 24 safe literal repository paths")
         if stage == "triage" and source_paths:
             raise ValueError("extra source paths require review stage")
+        if self.max_dependency_chars is not None and (stage != "review" or not source_paths):
+            raise ValueError("max_dependency_chars requires review stage and explicit source_paths")
         canonical = parse_ref(ref)
         self._begin()
         result = self._metadata(canonical)
         result.update(merge_base_sha=None, files=[], docs={}, sources=[], source_omissions=[], doc_omissions=[],
-                      policy={"config_path": None, "extraDocPaths": [], "ignorePatterns": []}, incomplete_reasons=[])
+                      policy={"config_path": None, "extraDocPaths": [], "ignorePatterns": []}, incomplete_reasons=[],
+                      source_budget={"mode": "shared" if self.max_dependency_chars is None else "split",
+                                     "source_limit_bytes": self.max_source_chars, "source_used_bytes": 0,
+                                     "dependency_limit_bytes": self.max_dependency_chars, "dependency_used_bytes": 0})
         reasons = result["incomplete_reasons"]
         repo, base, head = result["repo"], result["base_sha"], result["head_sha"]
         compare = self._request(f"repos/{repo}/compare/{base}...{head}?per_page=100&page=1")
@@ -350,8 +366,8 @@ class GitHub:
             except (ValueError, RecursionError):
                 reasons.append("invalid_config")
             break  # Ordered config precedence, as in the legacy collector.
-        self._files(compare, result, stage=stage)
-        discovered = self._doc_paths(tree, result["files"])
+        changed_paths = self._files(compare, result, stage=stage)
+        discovered = self._doc_paths(tree, result["files"], source_paths)
         extras = result["policy"]["extraDocPaths"]
         paths = list(dict.fromkeys([*DEFAULT_DOC_PATHS, *extras, *discovered]))
         remaining = self.max_doc_chars
@@ -377,7 +393,7 @@ class GitHub:
                 result["docs"][path] = text
                 remaining -= len(text.encode("utf-8"))
         if stage == "review":
-            self._sources(result, source_paths)
+            self._sources(result, source_paths, changed_paths)
         final = self._metadata(canonical)
         keys = ("base_sha", "head_sha", "state", "draft", "changed_files")
         if stage == "triage":
@@ -391,7 +407,7 @@ class GitHub:
         reasons = result["incomplete_reasons"]
         if not isinstance(compare, dict) or not isinstance(compare.get("files"), list):
             reasons.append("invalid_compare")
-            return
+            return set()
         base_commit = compare.get("base_commit")
         if not isinstance(base_commit, dict) or base_commit.get("sha") != result["base_sha"]:
             reasons.append("compare_identity_mismatch")
@@ -401,6 +417,11 @@ class GitHub:
         else:
             result["merge_base_sha"] = merge_base["sha"]
         files = compare["files"]
+        # Reserve all named paths before filtering ignored, duplicate, invalid,
+        # or over-count entries: explicit requests cannot reclassify a changed
+        # path as an unchanged dependency, even in an incomplete snapshot.
+        changed_paths = {item[key] for item in files if isinstance(item, dict)
+                         for key in ("filename", "previous_filename") if _safe_path(item.get(key))}
         if len(files) >= MAX_COMPARE_FILES or result["changed_files"] >= MAX_COMPARE_FILES:
             reasons.append("compare_file_limit")
         if len(files) != result["changed_files"]:
@@ -453,8 +474,9 @@ class GitHub:
                 clean["patch"] = patch
                 remaining -= len(patch)
             result["files"].append(clean)
+        return changed_paths
 
-    def _sources(self, result, source_paths):
+    def _sources(self, result, source_paths, changed_paths):
         """Collect required sides once, without a checkout or dependency execution."""
         head, merge_base = result["head_sha"], result["merge_base_sha"]
         wanted = {}
@@ -478,8 +500,12 @@ class GitHub:
             # Explicit caller requests may collect an otherwise ignored file.
             wanted[(path, head, "RIGHT")] = True
             wanted[(path, merge_base, "LEFT")] = True
-        remaining = self.max_source_chars
+        budget = result["source_budget"]
+        dependencies = set(source_paths) - changed_paths if self.max_dependency_chars is not None else set()
         for (path, ref, side), required in wanted.items():
+            pool = "dependency" if path in dependencies else "source"
+            remaining = budget[f"{pool}_limit_bytes"] - budget[f"{pool}_used_bytes"]
+            budget_reason = "dependency_sources_budget" if pool == "dependency" else "sources_budget"
             text = None
             if not required:
                 failure = "ignored_file"
@@ -490,7 +516,7 @@ class GitHub:
                 text, failure = self._text(result["repo"], ref, path, tree.get(path, _MISSING), limit=remaining)
                 if failure:
                     failure = {"missing": "missing_source", "invalid": "invalid_source",
-                               "budget": "sources_budget"}[failure]
+                               "budget": budget_reason}[failure]
             if failure:
                 result["source_omissions"].append({"path": path, "ref": ref, "side": side,
                                                    "reason": failure, "required": required})
@@ -499,7 +525,7 @@ class GitHub:
             else:
                 assert text is not None
                 result["sources"].append({"path": path, "ref": ref, "side": side, "text": text})
-                remaining -= len(text.encode("utf-8"))
+                budget[f"{pool}_used_bytes"] += len(text.encode("utf-8"))
 
     def _text(self, repo, ref, path, entry, *, limit):
         """Read a normal tree blob at an immutable ref, or return an omission.
@@ -565,21 +591,23 @@ class GitHub:
         return entries
 
     @staticmethod
-    def _doc_paths(tree, files):
+    def _doc_paths(tree, files, source_paths=()):
         """Select guidance, not a repository-wide documentation/CI crawl.
 
-        Root and changed-path ancestors (including rename/copy origins) supply
-        README/agent/contribution guidance. Architecture/workflow documents are
-        selected directly in root, docs/, and changed-path ancestors. Additional
-        arbitrary documents or CI files require trusted extraDocPaths.
+        Root, explicit-source and changed-path ancestors (including rename/copy
+        origins) supply README/agent/contribution guidance. Architecture/workflow
+        documents are selected directly in root, docs/, and those ancestors.
+        Additional arbitrary documents or CI files require trusted extraDocPaths.
         """
         ancestors = {""}
+        relevant_paths = set(source_paths)
         for item in files:
             if item.get("ignored"):
                 continue
-            for path in (item["filename"], item.get("previous_filename", item["filename"])):
-                parts = path.split("/")[:-1]
-                ancestors.update("/".join(parts[:index]) for index in range(1, len(parts) + 1))
+            relevant_paths.update((item["filename"], item.get("previous_filename", item["filename"])))
+        for path in relevant_paths:
+            parts = path.split("/")[:-1]
+            ancestors.update("/".join(parts[:index]) for index in range(1, len(parts) + 1))
         guidance = {"agents.md", "claude.md", ".cursorrules", "readme", "readme.md", "readme.rst",
                     "readme.txt", "contributing", "contributing.md", "contributing.rst", "contributing.txt"}
         paths = []

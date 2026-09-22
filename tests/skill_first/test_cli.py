@@ -31,6 +31,11 @@ if os.environ.get("FAKE_GH_SERIALIZED_DOC_CHARS"):
     fake.docs = {{"README.md": "é" * int(os.environ["FAKE_GH_SERIALIZED_DOC_CHARS"])}}
     fake.sources = {{(fixture["HEAD"], "src/main.py"): "é" * 100000,
                     (fixture["MERGE_BASE"], "src/main.py"): "é" * 100000}}
+if os.environ.get("FAKE_GH_DEPENDENCIES"):
+    for ref, word in [(fixture["HEAD"], "new"), (fixture["MERGE_BASE"], "old")]:
+        fake.sources[(ref, "src/main.py")] = "before\\n" + word + "\\n" + "x" * 171744
+        fake.sources[(ref, "lib/client.py")] = "é" * int(os.environ.get("FAKE_GH_DEPENDENCY_CHARS", "100")) if os.environ.get("FAKE_GH_UNICODE_DEPENDENCY") else "d" * 30949
+    fake.docs["lib/AGENTS.md"] = "Dependency guidance from pinned base"
 if os.environ.get("FAKE_GH_STALE"):
     fake.meta["head"]["sha"] = "c" * 40
 if os.environ.get("FAKE_GH_BINARY"):
