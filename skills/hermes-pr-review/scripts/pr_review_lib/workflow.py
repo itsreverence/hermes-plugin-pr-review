@@ -183,19 +183,40 @@ def validate_result(raw, bundle):
 
 
 def render_result(record):
+    """Present a validated final record without changing its judgment or outcome."""
     result = record["result"]
-    lines = ["# Local PR review", f"Outcome: {record['status']}", f"PR: {record['ref']}",
-             f"Head: {record['head_sha']}", f"Base: {record['base_sha']}", f"Model (operator-reported): {record['model']}",
-             "Static included-patch and pinned-source assessment only. No code executed, no tests run, no GitHub publication. Not a merge approval.",
-             result["summary"]]
-    if result["stage"] == "triage":
-        lines.extend([f"Decision: {result['decision']}", result["reason"]])
+    if (record["status"], result["coverage"]) not in {
+        ("completed", "complete"), ("incomplete", "incomplete"),
+    }:
+        raise ValueError("workflow outcome does not match final assessment coverage")
+    stage = result["stage"]
+    lines = ["# Local PR review", f"Static {stage} assessment: {result['coverage']}",
+             f"Workflow outcome: {record['status']}", "Not a merge approval.",
+             "## Assessment summary", result["summary"]]
+    if stage == "triage":
+        scope = "Static PR metadata and changed-file statistics assessment only. Implementation not reviewed."
+        lines.extend(["## Triage decision", f"Decision: {result['decision']}",
+                      result["reason"], f"Confidence (routing only): {result['confidence']}"])
     else:
+        scope = "Static included-patch and pinned-source assessment only."
+        lines.append("## Findings")
+        if not result["findings"]:
+            lines.append(
+                "No concrete introduced defects were reported in the supplied evidence."
+                if result["coverage"] == "complete" else
+                "No findings established. Assessment incomplete; missing context prevents a complete review."
+            )
         for finding in result["findings"]:
-            lines.extend([f"## {finding['severity']}: {finding['title']}",
+            lines.extend([f"### {finding['severity']}: {finding['title']}",
                           f"{finding['commit_path']}:{finding['line']} ({finding['side']}, {finding['commit_sha']}; diff path {finding['path']})",
-                          f"Evidence: {finding['evidence']}", finding["why_it_matters"], finding["suggested_fix"]])
-    lines.extend(["## Limitations", *(result["limitations"] or ["No additional limitations reported for this scoped assessment."])])
+                          f"Evidence: {finding['evidence']}", "**Why it matters**", finding["why_it_matters"],
+                          "**Suggested correction / next step**", finding["suggested_fix"]])
+    lines.extend(["## Coverage and limitations",
+                  scope + " No code executed, no tests run, no GitHub publication. Not a merge approval.",
+                  *(result["limitations"] or ["No additional limitations reported for this scoped assessment."]),
+                  "## Reviewed evidence identity", f"PR: {record['ref']}",
+                  f"Head: {record['head_sha']}", f"Base: {record['base_sha']}",
+                  f"Model (operator-reported): {record['model']}"])
     return "\n\n".join(lines) + "\n"
 
 

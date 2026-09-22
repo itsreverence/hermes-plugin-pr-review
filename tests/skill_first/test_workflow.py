@@ -49,6 +49,10 @@ def test_real_artifacts_dedupe_and_rerun(tmp_path):
     directory = state.root / "attempts" / one["id"]
     assert read_json(directory / "result.json")["head_sha"] == "a" * 40
     assert (directory / "review.md").is_file()
+    report = (directory / "review.md").read_text()
+    assert "Static review assessment: complete" in report
+    assert "Workflow outcome: completed" in report
+    assert "No concrete introduced defects were reported in the supplied evidence." in report
     two = prepare(state, github, "owner/repo#1", "review")
     assert two["status"] == "skipped"
     assert two["previous_id"] == one["id"]
@@ -130,6 +134,13 @@ def test_model_reports_incomplete_never_dedupes_success(tmp_path):
     attempt = prepare(state, github, "owner/repo#1", "review")
     payload = review() | {"coverage": "incomplete", "limitations": ["need more context"]}
     assert finish(state, github, attempt, tmp_path, payload)["status"] == "incomplete"
+    directory = state.root / "attempts" / attempt["id"]
+    saved = read_json(directory / "result.json")
+    assert saved["status"] == "incomplete" and saved["result"] == payload
+    report = (directory / "review.md").read_text()
+    assert "Static review assessment: incomplete" in report
+    assert "No findings established. Assessment incomplete" in report
+    assert "need more context" in report
     assert prepare(state, github, "owner/repo#1", "review")["status"] == "prepared"
 
 
@@ -149,6 +160,11 @@ def test_triage_accepts_stats_without_patch_and_remains_separate(tmp_path):
     payload = {"schema_version": 1, "stage": "triage", "coverage": "complete", "summary": "Risk needs review.",
                "limitations": [], "decision": "review", "reason": "Implementation needs assessment.", "confidence": "high"}
     assert finish(state, github, attempt, tmp_path, payload)["status"] == "completed"
+    report = (state.root / "attempts" / attempt["id"] / "review.md").read_text()
+    assert "Static triage assessment: complete" in report
+    assert "Implementation not reviewed." in report
+    assert "Decision: review" in report
+    assert "## Findings" not in report
     github.snapshot["files"][0]["patch"] = "@@ -1 +1 @@\n-old\n+new"
     assert prepare(state, github, "owner/repo#1", "review")["status"] == "prepared"
 
@@ -181,6 +197,10 @@ def test_left_rename_evidence_has_original_commit_path(tmp_path):
     finding = read_json(state.root / "attempts" / attempt["id"] / "result.json")["result"]["findings"][0]
     assert finding["commit_sha"] == "d" * 40
     assert finding["commit_path"] == "original.py"
+    report = (state.root / "attempts" / attempt["id"] / "review.md").read_text()
+    assert f"original.py:1 (LEFT, {'d' * 40}; diff path sample.py)" in report
+    assert "### warning: Removed guard" in report
+    assert "**Why it matters**" in report
 
 
 def test_rendered_context_alone_over_budget_never_prepares(tmp_path):
