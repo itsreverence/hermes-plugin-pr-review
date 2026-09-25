@@ -1,8 +1,9 @@
-# Manual skill-first candidate
+# Supervised manual skill
 
-This branch adds a manual-only replacement candidate alongside the existing
-plugin. It does not install or enable the skill, modify the plugin, scan
-repositories, create cron jobs, or change existing services/webhooks.
+This branch provides a supervised manual review path alongside the preserved
+legacy plugin. The [readiness record](SKILL_FIRST_READINESS.md) separates exercised
+behavior from experimental helpers and unpublished documentation. Installing the
+skill does not migrate the plugin, schedule scans, or change services or webhooks.
 
 The candidate bundle is [`skills/hermes-pr-review`](../skills/hermes-pr-review/SKILL.md).
 The manual prepare/finalize path runs without Hermes Python imports, plugin
@@ -13,8 +14,9 @@ primitives but has not been live-tested. Windows is not supported by this PoC.
 
 ## Manual operation
 
-From a trusted copy of this repository, load the bundle's SKILL.md and references
-into the default session. Do not install it globally during candidate testing.
+From a trusted copy or [verified pinned installation](SKILL_FIRST_INSTALL.md),
+load the bundle's SKILL.md and references into the default session. Use a fresh
+temporary HERMES_HOME for installation tests rather than replacing an active copy.
 Run the following commands through Hermes's `terminal` tool, replacing the PR
 URL and private state path. These are ordinary Python commands, not plugin CLI.
 
@@ -165,15 +167,16 @@ review, GitHub posting, service replacement, or live migration. The default sess
 has its configured tools/credentials: this skill is not a sandbox. Unattended
 reviews require a separate execution/credential restriction proof before rollout.
 
-## Next gate and rollback
+## Verification gates and rollback
 
-Complete the useful manual-review gate, independent review, and hosted CI before
-installation. Full source collection and relevant document selection address the
-initial context gaps. The [source-enriched verification record](SKILL_FIRST_V02_VERIFICATION.md)
-records real positive findings, a quiet control, and the fresh-session handoff.
-The scanner can be exercised independently in shadow mode without model calls.
-Only after that consider one-candidate scheduled runs with a no-change wake gate.
+Manual evidence, independent implementation review, and hosted CI apply to exact
+revisions. The [readiness record](SKILL_FIRST_READINESS.md) names the exercised
+bundle and separates it from later documentation-only changes. The
+[source-enriched record](SKILL_FIRST_V02_VERIFICATION.md) retains earlier positive
+findings, a quiet control, and the fresh-session handoff. These results do not
+authorize automatic progression to scheduled operation.
 
-Rollback of this candidate is to stop invoking its helper. Keep its private state
-and artifacts for inspection. Existing plugin code, registry, watch-state,
-services, hooks, and cron remain untouched; there is no live migration to undo.
+To stop manual use, stop invoking the helper. Follow the
+[installation rollback procedure](SKILL_FIRST_INSTALL.md#roll-back) to remove or
+restore a bundle. Keep private state and reports. Legacy code, routing, hooks,
+services, and schedules remain outside this operation.

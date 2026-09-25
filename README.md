@@ -1,124 +1,72 @@
 # Hermes PR Review
 
-Hermes-first pull request reviews with structured diagnostics, local artifacts, and opt-in GitHub automation.
+Supervised, local-first pull request review through a Hermes skill and small Python helpers.
 
 [![CI](https://github.com/itsreverence/hermes-plugin-pr-review/actions/workflows/ci.yml/badge.svg)](https://github.com/itsreverence/hermes-plugin-pr-review/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> **Public beta:** install from `main`. There is not yet a tagged stable release. GitHub comment posting is disabled by default.
+> **Manual skill-first preview:** this branch makes the supervised skill the
+> recommended path for manual reviews. It is not a stable release or a migration
+> of the legacy plugin. See the [readiness record](docs/SKILL_FIRST_READINESS.md)
+> for tested revisions and remaining publication gates.
 
-Hermes PR Review uses your configured Hermes model and authentication, gathers pull-request data through `gh`, loads reviewer instructions from the trusted base branch, and writes inspectable local artifacts. It does **not** execute pull-request code.
+## Review a PR with the skill
 
-## Manual skill-first candidate
+The [hermes-pr-review skill](skills/hermes-pr-review/SKILL.md) collects immutable
+GitHub evidence, guides judgment in your current Hermes session, and saves a
+validated local report. Python helpers handle claims, deduplication, evidence
+limits, and commit checks. The model supplies the assessment.
 
-A manual-only replacement candidate lives in [`skills/hermes-pr-review`](skills/hermes-pr-review/SKILL.md).
-It uses a shared skill plus small Python helpers for pinned GitHub reads, SQLite
-claims/deduplication, and local reports. It does not install a plugin, execute PR
-code, post to GitHub, or schedule scans. See [candidate operation and scope](docs/SKILL_FIRST.md),
-[verification evidence](docs/SKILL_FIRST_VERIFICATION.md), and
-[pinned manual installation](docs/SKILL_FIRST_INSTALL.md).
-The plugin instructions below remain unchanged; this candidate is not a live cutover.
+1. Follow the [commit-pinned installation guide](docs/SKILL_FIRST_INSTALL.md).
+2. Load `hermes-pr-review` in a supervised Hermes session and supply a PR URL.
+   Ask explicitly for a full review when that is what you need, rather than triage.
+3. Read the report's findings, coverage limits, and reviewed commits. A completed
+   static assessment is not a merge approval.
 
-## Requirements
+The manual helpers require Python 3.11+ and authenticated `gh`. They do not require
+plugin installation, systemd, Tailscale, CodeGraph, or a separate model SDK.
+Linux is exercised. macOS has not been live-tested, and Windows is unsupported.
+See [manual operation](docs/SKILL_FIRST.md) for helper commands.
 
-- Hermes Agent with third-party plugin installation
-- Git and authenticated GitHub CLI (`gh`)
-- Linux with user systemd for managed webhook-service installation
-- Tailscale Funnel or another HTTPS reverse proxy for event-driven automation
-- Optional CodeGraph CLI and local index for graph-backed context
+## Supported boundary
 
-Direct reviews work without systemd, a public webhook, or CodeGraph.
+- One supervised assessment of an explicitly selected PR.
+- Pinned patches, bounded source, and guidance from the trusted base revision.
+- Private local artifacts in a state root separate from legacy `pr-reviewer` data.
+- Explicit incomplete outcomes for missing evidence, with bounded retries.
+- No target code or tests executed and no GitHub comments, reviews, or merges.
+- No automatic second pass, scheduled worker, or automatic repository enrollment.
 
-## Install
+The skill is not a sandbox: the surrounding Hermes session retains its configured
+tools and credentials. Inspect findings before acting. A quiet report means no
+supported introduced defect was found in that evidence, not that the PR is correct.
 
-```bash
-hermes plugins install itsreverence/hermes-plugin-pr-review/plugins/pr_review --enable
-hermes pr-review doctor
-```
+The optional native `judge` and shadow-scanner commands remain
+[supervised experiments](docs/SKILL_FIRST.md#experimental-helpers-not-scheduled-operation).
+Their presence in the bundle does not make unattended review supported.
 
-Nested plugin installs update by reinstalling the same identifier:
+## Legacy plugin
 
-```bash
-hermes plugins install itsreverence/hermes-plugin-pr-review/plugins/pr_review --force --enable
-```
+The existing plugin, webhook receiver, graph integration, and opt-in posting
+remain available for existing installations. They are a separate path, with
+separate requirements and [cutover gates](docs/SKILL_FIRST_ROLLOUT.md).
+Installing the skill does not disable or replace them.
 
-## First no-post review
+- [Legacy installation](docs/INSTALLATION.md)
+- [Legacy operations and rollback](docs/OPERATIONS.md)
+- [Legacy dogfood and webhook tests](docs/TESTING.md)
 
-```bash
-hermes pr-review review OWNER/REPO#123 --json
-```
+## Development and evidence
 
-Review artifacts are written as owner-only files (`0600`); newly created managed directories use `0700`:
-
-```text
-~/.hermes/pr-reviewer/reviews/OWNER_REPO/PR/HEADSHA/
-```
-
-Typical artifacts include the collected context, manifest, structured findings, rendered review, and trace. No GitHub comment is created unless `--post-comment` is explicitly supplied.
-
-To enable a repository for watched or webhook reviews while keeping posting off:
-
-```bash
-hermes pr-review enable OWNER/REPO --local-repo /path/to/checkout
-```
-
-The local checkout supplies trusted base-branch context. Optional graph setup:
-
-```bash
-hermes pr-review graph-setup --local-repo /path/to/checkout --install-missing
-hermes pr-review enable OWNER/REPO \
-  --local-repo /path/to/checkout \
-  --graph-context auto \
-  --graph-context-binary codegraph
-```
-
-## Automated webhook path
-
-The supported Linux path is:
-
-1. enable a repository;
-2. install the user-systemd receiver;
-3. expose it through Tailscale Funnel or another HTTPS proxy;
-4. plan and explicitly apply the GitHub webhook;
-5. verify a real opened/synchronized pull-request delivery in no-post mode.
-
-See [Installation](docs/INSTALLATION.md) for the complete setup and [Operations](docs/OPERATIONS.md) for status, recovery, rollback, and removal.
-
-## Safety defaults
-
-- GitHub posting defaults to off per repository.
-- Remote onboarding and destructive operations require `--apply`.
-- Truncated diffs are not posted by watched/webhook reviews.
-- Webhook requests require GitHub SHA-256 HMAC verification.
-- The managed receiver binds to loopback and runs as a user service, never root.
-- Pull-request code is treated as untrusted and is not executed.
-- Reviewer config and instructions come from the trusted base branch.
-
-Before enabling posting, inspect several no-post reviews and prove a repository-specific webhook canary. See [Testing](docs/TESTING.md).
-
-## Privacy
-
-Review artifacts, dogfood summaries and copied artifacts, webhook payloads, service journals, and status output may contain repository names, PR text, paths, URLs, diagnostics, and review content. New artifact outputs use owner-only files and directories. Never publish the webhook secret, provider credentials, raw private-repository payloads, or an unreviewed artifact directory.
-
-## Documentation and support
-
-- [Installation](docs/INSTALLATION.md)
-- [Operations and rollback](docs/OPERATIONS.md)
+- [Current readiness and experiment decisions](docs/SKILL_FIRST_READINESS.md)
 - [Architecture and trust boundaries](docs/ARCHITECTURE.md)
-- [Testing, dogfood, and posting canaries](docs/TESTING.md)
-- [Release status and process](docs/RELEASING.md)
-- [Support](SUPPORT.md)
-- [Security policy](SECURITY.md)
+- [Development checks](docs/WORKFLOW.md)
 - [Contributing](CONTRIBUTING.md)
+- [Release policy](docs/RELEASING.md)
 - [Changelog](CHANGELOG.md)
+- [Support](SUPPORT.md) and [security reporting](SECURITY.md)
 
-## Uninstall
-
-```bash
-hermes pr-review webhook remove OWNER/REPO --hook-id HOOK_ID --apply
-hermes pr-review disable OWNER/REPO --apply
-hermes pr-review service remove --apply
-hermes plugins remove pr-review
-```
-
-Service removal preserves the local webhook secret and review artifacts. The plugin intentionally does not perform a device-wide Tailscale Funnel reset.
+Raw review packets, provider output, webhook payloads, and installation receipts
+may contain private repository information. Keep them outside this public
+repository. Publish only inspected, sanitized evidence summaries. Never publish
+provider credentials or webhook secrets.

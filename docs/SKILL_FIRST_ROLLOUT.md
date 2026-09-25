@@ -6,6 +6,10 @@ passes. No gate authorizes GitHub comments, approvals, merges, or PR-code execut
 
 ## Acceptance gates
 
+These are separate gates, not an automatic progression. Supervised manual use
+does not depend on finishing the later polling or unattended-activation gates.
+See [current readiness](SKILL_FIRST_READINESS.md) for exact-revision evidence.
+
 1. **Useful manual evidence:** collect bounded changed-file source at immutable
    head and merge-base commits, plus explicit dependencies and relevant base
    guidance. Test missing, oversized, unsafe, and stale evidence.
@@ -29,11 +33,12 @@ passes. No gate authorizes GitHub comments, approvals, merges, or PR-code execut
    Retire the old hook, receiver, and only their public route after replacement
    proof. Preserve private rollback artifacts and exact scheduler state.
 
-## Current operational exception
+## Historical operational exception
 
-The legacy watchdog is paused because it treats an empty GitHub hook delivery
-list as a recurring failure. Pausing its alerts does not validate end-to-end
-webhook delivery or retire the receiver. The receiver and hook were left intact.
+At the recorded legacy checkpoint, the watchdog was paused because it treated an
+empty GitHub hook delivery list as a recurring failure. Pausing alerts did not
+validate end-to-end delivery or retire the receiver. The receiver and hook were
+left intact. This is historical evidence, not a current service-health check.
 
 ## Rollback
 

@@ -1,5 +1,11 @@
 # Clearer static-assessment reports
 
+> Implementation-time record. The revision was subsequently published at
+> `eab3b8233be256ad53dbebfb08b7253895521dcc`. Exact installed bytes and a completed
+> foreground review were later checked. See [readiness](SKILL_FIRST_READINESS.md)
+> for that separate evidence. The original local verification scope below is
+> unchanged.
+
 ## Candidate scope
 
 This presentation-only revision changes the repository's manual skill renderer.

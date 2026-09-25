@@ -4,6 +4,26 @@ Install only after the manual evidence, independent review, and hosted CI gates
 in [the rollout record](SKILL_FIRST_ROLLOUT.md) pass. Installation does not enable
 polling or retire the legacy plugin.
 
+## Exercised preview revision
+
+The latest exercised bundle in the [readiness record](SKILL_FIRST_READINESS.md)
+is `eab3b8233be256ad53dbebfb08b7253895521dcc`, published on the draft branch of
+`itsreverence/hermes-plugin-pr-review`. This is a preview pin, not a stable tag.
+The readiness documentation changes no bundle files.
+
+Test that exact installer path in a new home first:
+
+```bash
+umask 077
+TEST_HOME=$(mktemp -d)
+HERMES_HOME="$TEST_HOME" hermes skills install https://raw.githubusercontent.com/itsreverence/hermes-plugin-pr-review/eab3b8233be256ad53dbebfb08b7253895521dcc/skills/hermes-pr-review/SKILL.md --category software-development --yes
+```
+
+Inspect the scan result and verify the files before active-profile installation.
+Keep the test home for inspection. The example does not switch the active profile
+or overwrite its installed skill. For a newer revision, repeat all applicable
+gates instead of assuming that this pin's evidence transfers.
+
 ## Pin the bundle
 
 Use the full published commit SHA, not a branch URL. The direct-URL installer

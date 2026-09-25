@@ -1,4 +1,9 @@
-# Testing and dogfood
+# Testing and legacy dogfood
+
+The local gate covers both implementations. Dogfood, webhook, and posting
+commands below belong to the legacy plugin, not the manual skill. For current
+manual evidence and checks, see [readiness](SKILL_FIRST_READINESS.md) and
+[the development workflow](WORKFLOW.md).
 
 ## Local gate
 

@@ -69,3 +69,44 @@ The complete legacy and skill-first suites pass on Python 3.11 and 3.12:
 SDK versions documented in [the development workflow](WORKFLOW.md).
 Ruff 0.15.10 and `git diff --check` pass. These are offline tests, not target-PR
 runtime verification or proof of unattended safety.
+
+## Installed and live verification
+
+The implementation at this historical verification checkpoint was commit
+`a1c74b80f6496d0ae4d5d02df109042503ca3037` in draft PR #11. Independent
+implementation review passed, and both Python CI jobs passed in
+[run 35702667941](https://github.com/itsreverence/hermes-plugin-pr-review/actions/runs/35702667941).
+All 13 installed bundle files matched that commit's saved manifest. The earlier
+bundle and incomplete evidence remain available for rollback and inspection.
+
+The installed helper completed attempt `437d2dfaa6ce44d28eac22e8a0b8cd21` for
+Hermes #118840 at the head and base recorded above. The reviewer read all five
+base documents, six patches, and 24 full source records. Parent adjudication
+accepted one warning: direct DNS failure in the new pooled client raises
+`SSRFConnectionBlocked`, bypassing the index loader's HTTP-error handler and its
+stale-index fallback. The dependency sources establish the exception hierarchy
+and affected call path. This is a static causal finding, not a runtime reproduction.
+The completed ledger row, result, and rendered report were read back.
+
+## Repeat after the target closed
+
+The first follow-up command did not execute because its tool approval expired.
+After fresh authorization on 2026-09-22 UTC, the installed helper reached GitHub.
+The target had closed without merging. Attempt
+`3cacb9be4b244e01a3148db8e643ec6f` correctly stopped `incomplete` with
+`closed_pr_requires_explicit_allow_closed`. Its evidence remains preserved.
+
+A subsequent, explicitly retrospective invocation used the same dependency and
+document arguments plus `--allow-closed`. The head and base were unchanged.
+Attempt `597722349b944a0eab8de926d33c06e4` exited 0 with `skipped` and linked
+`previous_id` to completed attempt `437d2dfaa6ce44d28eac22e8a0b8cd21`.
+The snapshot key matched the completed attempt. The new input digest differed:
+the saved inputs differ only in attempt ID and the state changing from open to
+closed. A captured target read also records `mergedAt: null`. No new judgment was requested.
+Read-back confirmed both ledger outcomes and the original completed report.
+
+The follow-up also rechecked the installed manifest and preserved artifact
+hashes. Fresh offline runs returned 734 tests and 82 subtests passed on each of
+Python 3.11 and 3.12. Hosted checks for the implementation commit remained green.
+No target code or tests ran, no target comments or reviews were posted, and no
+schedule, service, credential, or legacy receiver changed.

@@ -21,9 +21,10 @@ ruff check plugins tests scripts skills
 git diff --check
 ```
 
-Use Ruff 0.15.10 to match CI. The manual candidate can be tested independently
+Use Ruff 0.15.10 to match CI. The manual skill can be tested independently
 with `python -m pytest tests/skill_first -q`; it does not require Hermes imports.
-See [manual candidate scope](docs/SKILL_FIRST.md) before any installation.
+See [manual scope](docs/SKILL_FIRST.md) before any installation. Use the isolated
+test environments and pinned dependency commands in [WORKFLOW.md](docs/WORKFLOW.md).
 
 For a development installation of the legacy plugin in the active Hermes profile:
 
@@ -32,7 +33,10 @@ For a development installation of the legacy plugin in the active Hermes profile
 hermes pr-review doctor
 ```
 
-The installer creates a symlink to this checkout. Normal users should use the public plugin identifier documented in the README.
+The installer creates a symlink to this checkout. This is legacy-plugin setup,
+not skill installation. Manual-skill users follow
+[pinned installation](docs/SKILL_FIRST_INSTALL.md). Existing plugin users follow
+[legacy installation](docs/INSTALLATION.md).
 
 ## Pull requests
 
