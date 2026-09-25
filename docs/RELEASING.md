@@ -1,12 +1,37 @@
 # Releasing
 
-## Current status
+## Manual skill-first scope
 
-Hermes PR Review is an **unreleased public beta distributed from `main`**. The plugin metadata and changelog describe the planned `0.2.0` release, but no stable GitHub tag has been published.
+The legacy plugin release policy below does not define the manual skill's
+activation boundary. The standalone candidate uses Python helpers directly,
+without the plugin launcher, receiver, or scheduler. Its evidence is recorded in
+[dependency verification](SKILL_FIRST_DEPENDENCY_VERIFICATION.md) and the
+[blinded quality trial](SKILL_FIRST_QUALITY_TRIAL.md).
 
-The remaining `v0.2.0` blocker is shell-visible CLI exit-status propagation in supported Hermes Agent runtimes. This repository tracks it in [issue #1](https://github.com/itsreverence/hermes-plugin-pr-review/issues/1); the canonical upstream implementation is [NousResearch/hermes-agent#43645](https://github.com/NousResearch/hermes-agent/pull/43645).
+A decision that the candidate is suitable for supervised manual use does not
+merge its draft PR, create a release tag, enable unattended reviews, authorize
+GitHub posting, or retire the legacy path. Those remain separate decisions under
+[the rollout gates](SKILL_FIRST_ROLLOUT.md).
 
-## Proven public-beta properties
+The [readiness record](SKILL_FIRST_READINESS.md) names the exercised manual bundle
+and current decisions. For a documentation-only release-readiness change, keep
+the bundle unchanged, rerun local gates, and verify byte equality with the pinned
+installation. Publishing the resulting commit and checking its hosted CI remain
+separate steps. A prior green run does not cover a new commit.
+
+## Legacy plugin release status
+
+At the recorded plugin checkpoint, Hermes PR Review was an unreleased public
+beta distributed from `main`, with a planned `0.2.0` release and no stable tag.
+The manual-readiness pass does not revalidate legacy release status.
+
+The recorded blocker was shell-visible CLI exit-status propagation in supported
+Hermes runtimes, tracked in [issue #1](https://github.com/itsreverence/hermes-plugin-pr-review/issues/1)
+and [NousResearch/hermes-agent#43645](https://github.com/NousResearch/hermes-agent/pull/43645).
+Recheck both and the actual supported runtime before a legacy release. This
+plugin-launcher issue is not a blocker for direct manual Python helpers.
+
+## Previously proven legacy public-beta properties
 
 - anonymous clone and nested-plugin install in an isolated Hermes profile;
 - CLI discovery, prerequisite diagnosis, and uninstall;
@@ -18,7 +43,7 @@ The remaining `v0.2.0` blocker is shell-visible CLI exit-status propagation in s
 
 These properties describe prior evidence, not a permanent guarantee. Rerun release gates against the exact release tree.
 
-## Prepare `v0.2.0`
+## Prepare legacy `v0.2.0`
 
 1. Confirm the upstream exit-status fix is merged and available in the minimum supported Hermes runtime.
 2. Verify `doctor` returns nonzero for required failures through every supported launcher.
