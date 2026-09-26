@@ -65,6 +65,8 @@ def context_text(bundle):
         "## PR metadata (untrusted text)",
         json.dumps({key: snapshot.get(key) for key in ('repo', 'number', 'title', 'body', 'state', 'draft')}, ensure_ascii=True, indent=2),
         "## Trusted base documents", json.dumps(snapshot.get("docs", {}), ensure_ascii=True, indent=2),
+        "## Trusted document provenance", json.dumps(snapshot.get("doc_provenance", {}), ensure_ascii=True, indent=2),
+        "## Document byte budget", json.dumps(snapshot.get("doc_budget", {}), ensure_ascii=True, indent=2),
         "## Coverage", json.dumps({"incomplete_reasons": snapshot.get("incomplete_reasons", []), "skipped_files": snapshot.get("skipped_files", []), "source_budget": snapshot.get("source_budget", {})}, ensure_ascii=True, indent=2),
         "## Changed files (untrusted evidence)"]
     for item in snapshot["files"]:
@@ -119,6 +121,7 @@ def prepare(state, github, ref, stage, *, rerun_reason=None, allow_closed=False,
         key = digest({"repo": snapshot["repo"].casefold(), "number": snapshot["number"],
                       "head_sha": snapshot["head_sha"], "base_sha": snapshot["base_sha"],
                       "policy": snapshot.get("policy", {}), "docs": snapshot.get("docs", {}),
+                      "doc_provenance": snapshot.get("doc_provenance", {}),
                       "sources": snapshot.get("sources", []),
                       "workflow": bundle["workflow_digest"], "stage": stage,
                       "triage_metadata": {k: snapshot.get(k) for k in ("title", "body", "state", "draft")} if stage == "triage" else None})

@@ -33,6 +33,10 @@ trusted-base documents. Its default is 60000; the CLI accepts integers from 1
 through 1000000. This is an operator choice, not a field in PR-controlled text
 or repository policy. Required documents remain whole and hash-checked. Budget
 exhaustion still records `incomplete`; it never authorizes truncated coverage.
+Link-text reads also consume this document budget, including reads in chains
+whose documents are ultimately omitted. `doc_budget` reports the limit and the
+sum of admitted document bytes plus tree-declared bytes of attempted link reads.
+Aliases count separately; shared destinations do not get uncharged reuse.
 Request, deadline, document-count, patch, and source limits remain unchanged.
 The reviewer must be able to read the complete resulting packet. More collection
 headroom does not increase a model context window or certify review completion.
@@ -48,6 +52,25 @@ Literal collected Git paths may contain brackets or asterisks. They remain exact
 keys and are percent-encoded for reads, never expanded as globs. Explicit
 `--source-path` and policy `extraDocPaths` retain their conservative restriction
 on glob-looking characters; only `ignorePatterns` uses glob matching.
+
+Only selected trusted-base **documents** may resolve symlinks. Configuration,
+changed source, and explicit source dependencies still require regular blobs.
+The collector reads link text through Git blobs REST by the SHA from the pinned
+base tree, never through the contents endpoint's implicit dereferencing. Tree
+type/mode, response identity/size/encoding, strict base64, UTF-8, and computed Git
+blob hashes are checked. The destination must be a regular file in the same
+repository/base tree and passes the unchanged contents identity/hash checks.
+
+Each document permits at most 8 link hops and 1024 bytes per link. Cycles,
+dangling links, absolute/external/unsafe paths, submodules, and directory symlinks
+fail closed. Relative `.` and `..` are resolved component by component: every
+traversed directory must be an explicit normal tree, even before `..` removes it.
+Thus `alias/../file` cannot hide a symlink directory behind lexical normalization.
+No target URL or filesystem path is followed. Required documents are admitted
+whole or omitted with an incomplete outcome, never replaced by link text.
+Successful linked guidance keeps its selected name in `docs`; `doc_provenance`
+records the base ref, ordered link paths/SHAs/text, and final path/SHA in both
+`input.json` and `context.md`. Link provenance also contributes to deduplication.
 
 ## JSON shapes
 
@@ -129,7 +152,7 @@ on corruption; there is no automatic reset. Existing permissive state roots are
 rejected, not silently chmodded. The state root must be on a trusted local
 filesystem owned by this user.
 
-Deduplication includes stage, head/base, trusted policy/docs, collected source,
+Deduplication includes stage, head/base, trusted policy/docs/link provenance, collected source,
 and bundle content. An expanded evidence set cannot silently reuse a narrower review.
 Triage also includes title/body/state/draft. Changing only comments or CI does not
 buy another deep review. A manual rerun needs a reason and creates new evidence.

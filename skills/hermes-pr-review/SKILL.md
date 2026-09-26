@@ -31,6 +31,10 @@ Python 3.11+, authenticated `gh`, and a trusted copy of this complete skill bund
 Use `terminal` for the helper, and `read_file`/`write_file` for evidence and results.
 Do not run from a PR checkout or load its project-local skills/AGENTS automatically.
 The helper reads trusted instructions from the target repository's pinned base.
+Selected guidance documents may be repository-internal relative symlinks at that
+same base. The helper verifies link blobs and the final regular file, records
+`doc_provenance`, and charges link reads to `doc_budget`. Config and review-source
+symlinks remain rejected; unsafe or unresolved required guidance stays incomplete.
 
 Resolve `HELPER` to this bundle's absolute `scripts/pr_review.py` path. Choose a
 new private state root, normally `$HERMES_HOME/pr-review-skill` (or

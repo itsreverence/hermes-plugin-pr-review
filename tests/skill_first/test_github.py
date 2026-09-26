@@ -106,6 +106,15 @@ class FakeGitHub:
                 value.update(entry)
                 entries[entry.get("path")] = value
             return response({**tree, "sha": "e" * 40, "tree": list(entries.values())})
+        blob_prefix = "repos/Org/repo/git/blobs/"
+        if endpoint.startswith(blob_prefix):
+            sha = endpoint[len(blob_prefix):]
+            for text in self.docs.values():
+                if blob_sha(text) == sha:
+                    raw = text.encode() if isinstance(text, str) else text
+                    return response({"sha": sha, "size": len(raw), "encoding": "base64",
+                                     "content": base64.b64encode(raw).decode()})
+            return response({}, 404)
         prefix = "repos/Org/repo/contents/"
         if endpoint.startswith(prefix):
             from urllib.parse import unquote
@@ -818,9 +827,9 @@ def test_doc_budget_and_optional_absence_have_distinct_omissions():
 
 
 @pytest.mark.parametrize("path", ["AGENTS.md", ".github/hermes-pr-reviewer.json"])
-def test_trusted_docs_and_config_reject_tree_symlinks_even_when_contents_reports_file(path):
+def test_unsafe_docs_and_config_reject_tree_symlinks_even_when_contents_reports_file(path):
     fake = FakeGitHub()
-    fake.docs[path] = "{}"
+    fake.docs[path] = "/etc/passwd"
     fake.tree["tree"] = [{"path": path, "type": "blob", "mode": "120000"}]
     result = GitHub(transport=fake).collect(REF)
     assert ("invalid_config" if path.endswith(".json") else "invalid_document") in result["incomplete_reasons"]

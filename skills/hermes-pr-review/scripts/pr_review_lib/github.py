@@ -44,6 +44,8 @@ DEFAULT_DOC_PATHS = (
 )
 MAX_RESPONSE_CHARS = 16_000_000
 MAX_DOC_PATHS = 32
+MAX_DOC_LINK_HOPS = 8
+MAX_DOC_LINK_BYTES = 1024
 MAX_EXTRA_SOURCE_PATHS = 24
 MAX_COMPARE_FILES = 300
 
@@ -337,6 +339,7 @@ class GitHub:
         self._begin()
         result = self._metadata(canonical)
         result.update(merge_base_sha=None, files=[], docs={}, sources=[], source_omissions=[], doc_omissions=[],
+                      doc_provenance={}, doc_budget={"limit_bytes": self.max_doc_chars, "used_bytes": 0},
                       policy={"config_path": None, "extraDocPaths": [], "ignorePatterns": []}, incomplete_reasons=[],
                       source_budget={"mode": "shared" if self.max_dependency_chars is None else "split",
                                      "source_limit_bytes": self.max_source_chars, "source_used_bytes": 0,
@@ -370,17 +373,16 @@ class GitHub:
         discovered = self._doc_paths(tree, result["files"], source_paths)
         extras = result["policy"]["extraDocPaths"]
         paths = list(dict.fromkeys([*DEFAULT_DOC_PATHS, *extras, *discovered]))
-        remaining = self.max_doc_chars
         selected_count = 0
         for path in paths:
             required = path in tree or path in extras
-            entry = tree.get(path, _MISSING)
+            provenance = None
             if required:
                 selected_count += 1
             if required and selected_count > MAX_DOC_PATHS:
                 text, failure = None, "docs_count_limit"
             else:
-                text, failure = self._text(repo, base, path, entry, limit=remaining)
+                text, failure, provenance = self._document(repo, base, path, tree, result["doc_budget"])
                 if failure:
                     failure = {"missing": "missing_document", "invalid": "invalid_document",
                                "budget": "docs_budget"}[failure]
@@ -391,7 +393,8 @@ class GitHub:
             else:
                 assert text is not None
                 result["docs"][path] = text
-                remaining -= len(text.encode("utf-8"))
+                if provenance:
+                    result["doc_provenance"][path] = provenance
         if stage == "review":
             self._sources(result, source_paths, changed_paths)
         final = self._metadata(canonical)
@@ -526,6 +529,103 @@ class GitHub:
                 assert text is not None
                 result["sources"].append({"path": path, "ref": ref, "side": side, "text": text})
                 budget[f"{pool}_used_bytes"] += len(text.encode("utf-8"))
+
+    def _document(self, repo, ref, path, tree, budget):
+        """Resolve selected base guidance only; config/source still use _text.
+
+        Every link is a Git blob read by pinned tree SHA, never a contents
+        auto-dereference. Charge link reads even if their document is omitted.
+        Aliases are separate selected documents: no uncharged content reuse.
+        """
+        links, seen = [], set()
+        while True:
+            entry = tree.get(path, _MISSING)
+            remaining = budget["limit_bytes"] - budget["used_bytes"]
+            if not isinstance(entry, dict) or entry.get("mode") != "120000":
+                text, failure = self._text(repo, ref, path, entry, limit=remaining)
+                if failure:
+                    return None, failure, None
+                assert text is not None
+                budget["used_bytes"] += len(text.encode("utf-8"))
+                provenance = {"ref": ref, "links": links, "target": {"path": path, "sha": entry["sha"]}}
+                return text, None, provenance if links else None
+            if (path in seen or len(links) >= MAX_DOC_LINK_HOPS or
+                    not _safe_path(path) or not _sha(ref) or entry.get("type") != "blob" or
+                    not _sha(entry.get("sha")) or not _integer(entry.get("size")) or
+                    entry["size"] > MAX_DOC_LINK_BYTES):
+                return None, "invalid", None
+            if entry["size"] > remaining:
+                return None, "budget", None
+            seen.add(path)
+            budget["used_bytes"] += entry["size"]
+            target, failure = self._document_link(repo, entry)
+            if failure:
+                return None, failure, None
+            resolved = self._document_target(tree, path, target)
+            if resolved is None:
+                return None, "invalid", None
+            links.append({"path": path, "sha": entry["sha"], "target": target})
+            path = resolved
+
+    def _document_link(self, repo, entry):
+        """Decode link text, verifying the Git blob itself, not API labels.
+
+        Git blobs REST has no required 'type' field; the tree must say blob.
+        Reject contradictory type/contents metadata if supplied in the response.
+        """
+        data = self._request(f"repos/{repo}/git/blobs/{entry['sha']}", optional=True)
+        if data is _MISSING:
+            return None, "missing"
+        if (not isinstance(data, dict) or data.get("type", "blob") != "blob" or
+                data.get("sha") != entry["sha"] or data.get("encoding") != "base64" or
+                not _integer(data.get("size")) or data["size"] != entry["size"] or
+                "target" in data or "submodule_git_url" in data or
+                not isinstance(data.get("content"), str) or
+                len(data["content"]) > MAX_DOC_LINK_BYTES * 2 + 1024):
+            return None, "invalid"
+        try:
+            raw = base64.b64decode(data["content"].replace("\n", "").replace("\r", ""), validate=True)
+            text = raw.decode("utf-8")
+        except (ValueError, binascii.Error, UnicodeError):
+            return None, "invalid"
+        blob_sha = hashlib.sha1(f"blob {len(raw)}\0".encode("ascii") + raw).hexdigest()
+        if len(raw) != entry["size"] or blob_sha != entry["sha"]:
+            return None, "invalid"
+        return text, None
+
+    @staticmethod
+    def _document_target(tree, path, target):
+        """Walk literal components; never cancel 'symlink-dir/..' lexically.
+
+        Every traversed directory, including the link's ancestors and any
+        directory later popped by '..', must be an explicit normal tree.
+        No filesystem, URL, cross-repository, or symlink-directory resolution.
+        """
+        if (not target or target != target.strip() or target.startswith(("/", "~", "-")) or
+                any(char in target for char in "\\%:") or
+                any(ord(char) < 32 or ord(char) == 127 for char in target)):
+            return None
+        def directory(parts):
+            entry = tree.get("/".join(parts))
+            return (isinstance(entry, dict) and entry.get("type") == "tree" and
+                    entry.get("mode") == "040000" and _sha(entry.get("sha")))
+        parts = path.split("/")[:-1]
+        if any(not directory(parts[:i]) for i in range(1, len(parts) + 1)):
+            return None
+        components = target.split("/")
+        for index, component in enumerate(components):
+            if component == "..":
+                if not parts:
+                    return None
+                parts.pop()
+            elif component != ".":
+                if not _safe_path(component):
+                    return None
+                parts.append(component)
+            if index < len(components) - 1 and parts and not directory(parts):
+                return None
+        resolved = "/".join(parts)
+        return resolved if _safe_path(resolved) else None
 
     def _text(self, repo, ref, path, entry, *, limit):
         """Read a normal tree blob at an immutable ref, or return an omission.
