@@ -1,16 +1,23 @@
-# Testing and dogfood
+# Testing and legacy dogfood
+
+The local gate covers both implementations. Dogfood, webhook, and posting
+commands below belong to the legacy plugin, not the manual skill. For current
+manual evidence and checks, see [readiness](SKILL_FIRST_READINESS.md) and
+[the development workflow](WORKFLOW.md).
 
 ## Local gate
 
 ```bash
 export HERMES_AGENT_SRC=/path/to/hermes-agent
-PYTHONPATH="$PWD:$HERMES_AGENT_SRC" python -m pytest tests/plugins -q
+PYTHONPATH="$PWD:$HERMES_AGENT_SRC" python -m pytest tests/plugins tests/skill_first -q
 PYTHONPATH="$PWD:$HERMES_AGENT_SRC" python -m py_compile plugins/pr_review/*.py
-ruff check plugins tests scripts
+ruff check plugins tests scripts skills
 git diff --check
 ```
 
-CI runs the plugin suite against a pinned Hermes Agent API checkout on Python 3.11 and 3.12.
+CI runs both the legacy plugin suite and the manual skill-first suite on Python 3.11 and 3.12. Only the legacy suite requires the pinned Hermes Agent API checkout. Use Ruff 0.15.10, matching CI.
+
+For the manual candidate alone, run `python -m pytest tests/skill_first -q`. See [manual candidate scope and operation](SKILL_FIRST.md). These tests do not install the skill, call a model, or write to GitHub.
 
 ## No-post dogfood
 

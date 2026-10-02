@@ -2,7 +2,20 @@
 
 All notable changes to Hermes PR Review are documented here.
 
-## 0.2.0 — Unreleased public beta
+## Manual skill-first preview — Unreleased
+
+- Add supervised prepare, assess, finalize, and read-back review through the
+  `hermes-pr-review` skill, without plugin installation or GitHub publication.
+- Collect pinned patches, bounded full source, explicit dependencies, and
+  trusted-base guidance. Preserve incomplete attempts and intentional reruns.
+- Retain private reports, durable claims, deduplication, and scoped static-review
+  wording. Completion is not merge approval or runtime verification.
+- Document pinned installation and rollback, evidence limits, and the separation
+  between supported manual use, experimental helpers, and the legacy plugin.
+- Preserve single-pass review. No schedule, automatic second pass, posting,
+  or legacy cutover is enabled. See [readiness](docs/SKILL_FIRST_READINESS.md).
+
+## Legacy plugin 0.2.0 — Unreleased public beta
 
 - Add actionable `doctor` diagnostics with JSON output and repair steps.
 - Add managed Linux user-systemd receiver install, status, logs, and safe removal.

@@ -1,4 +1,8 @@
-# Installation
+# Legacy plugin installation
+
+This guide installs the plugin and optional webhook infrastructure. For the
+supervised manual skill, use [pinned skill installation](SKILL_FIRST_INSTALL.md).
+Installing either path does not authorize migration or removal of the other.
 
 ## Requirements
 
