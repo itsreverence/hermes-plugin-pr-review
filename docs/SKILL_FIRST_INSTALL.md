@@ -4,12 +4,14 @@ Install only after the manual evidence, independent review, and hosted CI gates
 in [the rollout record](SKILL_FIRST_ROLLOUT.md) pass. Installation does not enable
 polling or retire the legacy plugin.
 
-## Exercised preview revision
+## Historical installed preview
 
-The latest exercised bundle in the [readiness record](SKILL_FIRST_READINESS.md)
-is `eab3b8233be256ad53dbebfb08b7253895521dcc`, published on the draft branch of
+The previously installed bundle in the [readiness record](SKILL_FIRST_READINESS.md)
+is `eab3b8233be256ad53dbebfb08b7253895521dcc`, published on the preview branch of
 `itsreverence/hermes-plugin-pr-review`. This is a preview pin, not a stable tag.
-The readiness documentation changes no bundle files.
+The newer symlink-compatible implementation is `be84793e650c2dd4de4dc76af456860481ee115f`.
+Use its final published revision only after exact-head checks and the verification
+below; the older installation receipt does not cover that changed bundle.
 
 Test that exact installer path in a new home first:
 

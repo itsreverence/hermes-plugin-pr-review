@@ -12,7 +12,34 @@ below are not a queue of required follow-up experiments. Publication of this
 readiness documentation, merging the draft PR, tagging a release, and legacy
 cutover are separate decisions.
 
-## Exercised bundle
+## Merge candidate: guidance-symlink compatibility
+
+The newer implementation pin is `be84793e650c2dd4de4dc76af456860481ee115f`.
+It resolves selected trusted-base document symlinks through pinned Git blobs.
+Configuration and source-file symlinks remain rejected. Blob identity checks,
+path restrictions, cycle and hop limits, and existing document budgets remain
+fail-closed. The baseline review rubric and single-pass policy are unchanged.
+
+The exact implementation diff passed independent static security and correctness
+review. Local suites passed with 828 tests and 82 subtests on each of Python 3.11
+and 3.12; Ruff, compilation, and whitespace checks also passed. A suggested direct
+two-alias budget regression remains nonblocking follow-up, not claimed coverage.
+
+Two private candidate-helper reviews of Zod #6377 completed at head
+`f1af82f5f7eed7a3a489fb2b6a1a8344430c3469` and base/merge base
+`2d90846af918af9602e088812d63a035d47cdbe4`. Both admitted the same evidence,
+including three linked guidance documents, without required-document omissions.
+Exact reports and ledger states were read back. Original failed attempts remain
+preserved. This verifies collection and finalization, not every reported defect:
+the independent findings assessment stopped at an approval hold and remains
+incomplete. Neither review executed target code or published a GitHub review.
+
+This implementation needs its own exact-head hosted checks and full-commit URL
+installation proof before release. The historical receipts below do not satisfy
+those gates for a changed bundle. Publication, installation, and ready-for-review
+status must be verified separately; none implies merge or unattended operation.
+
+## Historical exercised bundle
 
 The implementation pin is `eab3b8233be256ad53dbebfb08b7253895521dcc` in
 [draft PR #11](https://github.com/itsreverence/hermes-plugin-pr-review/pull/11).
@@ -90,6 +117,17 @@ revision bindings and limitations remain intact.
   only to the original frozen layouts, not to the revised renderer.
 - [Second-pass trial](SKILL_FIRST_SECOND_PASS_TRIAL.md): no independently supported
   additional detection gain satisfying its gate. Do not adopt automatic second passes.
+- **AST-assisted discovery:** keep structural search optional, not a required
+  reviewer dependency. A six-case paired repository-discovery study completed
+  across Requests, Fastify, and Zod. Separate blind content scoring found the
+  same supported defect mechanisms in both arms, with mixed context gains.
+  A mismatch between written completion guidance and the frozen validator left
+  no fully valid pair, so the descriptive results are not a clean adoption pass.
+  All six AST-arm reviewers used structural search in that study. Later normal
+  workflow checks did not demonstrate an AST search benefit; the Zod retry loaded
+  AST guidance but did not use structural search, and its independent findings
+  assessment remains incomplete. These trials do not block manual release or
+  justify another mandatory experiment.
 - **Version-bound evidence comparison:** closed as infrastructure-incomplete and
   unscored. Background approval-delivery failures prevented completed independent
   arms. Genuine approval timeouts and missing-notifier pending states remain
@@ -117,7 +155,9 @@ service replacement is authorized by this record. The
 [unattended and cutover gates](SKILL_FIRST_ROLLOUT.md) remain separate and unpassed
 by this closeout. The surrounding Hermes session is not a sandbox.
 
-The next delivery step is publication of the reviewed documentation commit to the
-existing draft PR, once explicitly authorized, followed by exact-head hosted CI.
-No further reviewer experiment is a prerequisite. A new implementation or bundle
-change would require its own tests, independent review, and installation proof.
+The next delivery step is publication of the symlink-compatible candidate and
+this readiness update to the existing PR, followed by exact-head hosted CI and
+pinned installation verification. Required checks include CodeQL as well as the
+Python jobs. Re-enable an inactive required workflow rather than removing branch
+protection. No further reviewer experiment is a prerequisite. Keep merge and
+legacy cutover separate from ready-for-review status.
